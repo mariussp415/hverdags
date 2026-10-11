@@ -1,0 +1,18 @@
+HVERDAGS 1.0 – EGET GRATIS SUPABASE-PROSJEKT
+==========================================
+
+Hverdags har nå sin egen Supabase-database og egen innlogging.
+PingPong-prosjektet er urørt. Vektappens Supabase-prosjekt er pauset,
+slik at prosjektgrensen på gratisnivå ikke overskrides.
+Vektdataene er beholdt i det pausede prosjektet.
+
+1. Pakk ut ZIP-en i en ny mappe. Ikke bland med den gamle Hverdags-mappen.
+2. Dobbeltklikk START-HVERDAGS.bat.
+3. Åpne http://localhost:3000.
+4. Opprett to brukere, lag ett felles hjem og inviter den andre med kode.
+
+Hvis du bruker PowerShell:
+    npm.cmd install
+    npm.cmd run dev
+
+Les README.md for eventuelle e-postredirects og videre oppsett.
