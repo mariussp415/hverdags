@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { configured, supabase } from '@/lib/supabase';
-import type { Event as HomeEvent, Grocery, Household, Page, Task, Visibility } from '@/lib/models';
+import type { Event as HomeEvent, Grocery, Household, MealPlan, Page, Task, Visibility } from '@/lib/models';
+import { mondayOfWeek, shiftISODate, weekDates } from '@/lib/meal-dates.mjs';
 
 const locale = 'nb-NO';
 // Bekreftelseslenker fra Supabase skal tilbake til riktig repo-sti.
@@ -31,6 +32,8 @@ function Icon({ name, size=21 }: { name: string; size?:number }) {
     refresh:<><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/></>,
     logout:<><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5m5-4 4-4-4-4m4 4H9"/></>,
     sparkle:<><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Z"/></>,
+    meals:<><path d="M4 3v8a4 4 0 0 0 4 4v6M8 3v12M12 3v8a4 4 0 0 1-4 4M19 3c-3 3-4 6-4 10h4v8"/></>,
+    left:<path d="m15 18-6-6 6-6"/>,
     edit:<><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L9.5 16.5 5 17.5l1-4.5 10.4-9.4Z"/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icons[name] || icons.heart}</svg>;
@@ -57,9 +60,16 @@ export default function Home() {
   const [tasks,setTasks] = useState<Task[]>([]);
   const [groceries,setGroceries] = useState<Grocery[]>([]);
   const [events,setEvents] = useState<HomeEvent[]>([]);
+  const [meals,setMeals] = useState<MealPlan[]>([]);
+  const [mealWeek,setMealWeek] = useState(()=>mondayOfWeek(new Date()));
+  const [editingMeal,setEditingMeal] = useState<MealPlan|null>(null);
+  const [mealDate,setMealDate] = useState('');
+  const [mealName,setMealName] = useState('');
+  const [mealActual,setMealActual] = useState('');
+  const [mealNotes,setMealNotes] = useState('');
   const [notice,setNotice] = useState('');
   const [busy,setBusy] = useState(false);
-  const [modal,setModal] = useState<'task'|'event'|null>(null);
+  const [modal,setModal] = useState<'task'|'event'|'meal'|null>(null);
   const [editingTask,setEditingTask] = useState<Task|null>(null);
   const [editingEvent,setEditingEvent] = useState<HomeEvent|null>(null);
   const [taskFilter,setTaskFilter] = useState<'all'|'private'|'shared'>('all');
@@ -99,7 +109,7 @@ export default function Home() {
   },[api]);
 
   useEffect(()=>{
-    if (!user) { setHousehold(null);setTasks([]);setGroceries([]);setEvents([]);setPage('home'); }
+    if (!user) { setHousehold(null);setTasks([]);setGroceries([]);setEvents([]);setMeals([]);setPage('home'); }
   },[user]);
 
   const loadHome = useCallback(async()=>{
@@ -117,15 +127,17 @@ export default function Home() {
 
   const loadData = useCallback(async()=>{
     if (!api||!user||!household) return;
-    const [a,b,c] = await Promise.all([
+    const [a,b,c,d] = await Promise.all([
       api.from('hd_tasks').select('*').order('created_at',{ascending:false}),
       api.from('hd_shopping_items').select('*').eq('household_id',household.id).order('created_at',{ascending:false}),
       api.from('hd_events').select('*').order('starts_at',{ascending:true}),
+      api.from('hd_meal_plans').select('*').eq('household_id',household.id).order('meal_date',{ascending:false}).limit(400),
     ]);
-    if (a.error||b.error||c.error) setNotice(a.error?.message||b.error?.message||c.error?.message||'Kunne ikke hente data');
+    if (a.error||b.error||c.error||d.error) setNotice(a.error?.message||b.error?.message||c.error?.message||d.error?.message||'Kunne ikke hente data');
     if (a.data) setTasks(a.data as Task[]);
     if (b.data) setGroceries(b.data as Grocery[]);
     if (c.data) setEvents(c.data as HomeEvent[]);
+    if (d.data) setMeals(d.data as MealPlan[]);
   },[api,user,household]);
   useEffect(()=>{void loadData();},[loadData]);
   useEffect(()=>{
@@ -134,6 +146,7 @@ export default function Home() {
       .on('postgres_changes',{event:'*',schema:'public',table:'hd_tasks'},()=>{void loadData();})
       .on('postgres_changes',{event:'*',schema:'public',table:'hd_shopping_items'},()=>{void loadData();})
       .on('postgres_changes',{event:'*',schema:'public',table:'hd_events'},()=>{void loadData();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'hd_meal_plans'},()=>{void loadData();})
       .subscribe();
     const interval=setInterval(()=>{void loadData();},30000); // reserve ved tapte Realtime-hendelser
     const onFocus=()=>{void loadData();};
@@ -176,7 +189,11 @@ export default function Home() {
     else setEventDate('');
     setModal('event');
   }
-  function closeModal(){setModal(null);setEditingTask(null);setEditingEvent(null);setNotice('');}
+  function openMealEditor(date:string, meal?:MealPlan){
+    setNotice(''); setEditingMeal(meal??null); setMealDate(date);
+    setMealName(meal?.meal_name??''); setMealActual(meal?.actual_meal??''); setMealNotes(meal?.notes??''); setModal('meal');
+  }
+  function closeModal(){setModal(null);setEditingTask(null);setEditingEvent(null);setEditingMeal(null);setNotice('');}
   async function sendPasswordReset(){
     if(!api||!email.trim()) {setNotice('Skriv inn e-postadressen din først.');return;}
     setBusy(true);setNotice('');
@@ -219,6 +236,38 @@ export default function Home() {
     if(error){setNotice(error.message);return;}
     closeModal();setEventTitle('');setEventDate('');await loadData();
   }
+  async function saveMeal(e:FormEvent){
+    e.preventDefault();
+    if(!api||!user||!household||!mealDate||!mealName.trim())return;
+    setBusy(true);setNotice('');
+    const values={meal_date:mealDate,meal_name:mealName.trim(),notes:mealNotes.trim(),
+      ...(editingMeal?.status==='eaten'?{actual_meal:mealActual.trim()||mealName.trim()}:{})};
+    const {error}=editingMeal
+      ? await api.from('hd_meal_plans').update(values).eq('id',editingMeal.id).eq('household_id',household.id)
+      : await api.from('hd_meal_plans').insert({...values, household_id:household.id,created_by:user.id});
+    setBusy(false);
+    if(error){setNotice(error.code==='23505'?'Det finnes allerede en middag på denne datoen. Rediger den i stedet.':error.message);return;}
+    closeModal();await loadData();
+  }
+  async function toggleMeal(meal:MealPlan){
+    if(!api||!household)return;
+    setBusy(true);setNotice('');
+    const status=meal.status==='eaten'?'planned':'eaten';
+    const {error}=await api.from('hd_meal_plans')
+      .update({status,eaten_at:status==='eaten'?new Date().toISOString():null,actual_meal:status==='eaten'?meal.meal_name:null})
+      .eq('id',meal.id).eq('household_id',household.id);
+    setBusy(false);
+    if(error)setNotice(error.message);
+    await loadData();
+  }
+  async function removeMeal(meal:MealPlan){
+    if(!api||!household||!window.confirm(`Slette ${meal.meal_name} fra matkalenderen?`))return;
+    setBusy(true);setNotice('');
+    const {error}=await api.from('hd_meal_plans').delete().eq('id',meal.id).eq('household_id',household.id);
+    setBusy(false);
+    if(error)setNotice(error.message);
+    await loadData();
+  }
   async function saveGrocery(e:FormEvent){
     e.preventDefault();if(!api||!user||!household||!groceryName.trim())return;
     setBusy(true);setNotice('');
@@ -254,9 +303,13 @@ export default function Home() {
   const visibleDoneTasks=tasks.filter(item=>item.completed&&(taskFilter==='all'||item.visibility===taskFilter));
   const visibleEvents=events.filter(item=>eventFilter==='all'||item.visibility===eventFilter);
   const unchecked=groceries.filter(item=>!item.checked);
+  const displayedWeek=weekDates(mealWeek);
+  const currentMonday=mondayOfWeek(new Date());
+  const todayMeal=meals.find(meal=>meal.meal_date===todayStr());
+  const plannedThisWeek=displayedWeek.filter(date=>meals.some(meal=>meal.meal_date===date)).length;
   const displayName=((user?.user_metadata?.display_name as string|undefined)||user?.email?.split('@')[0]||'dere').trim().split(' ')[0];
   const greeting=new Date().getHours()<11?'God morgen':new Date().getHours()<17?'God ettermiddag':'God kveld';
-  const nav:[Page,string,string][]=[['home','Hjem','home'],['tasks','Oppgaver','tasks'],['shopping','Handleliste','shopping'],['calendar','Kalender','calendar']];
+  const nav:[Page,string,string][]=[['home','Hjem','home'],['tasks','Oppgaver','tasks'],['shopping','Handle','shopping'],['calendar','Kalender','calendar'],['meals','Matplan','meals']];
 
   if(!api) return <main className="fullscreen"><div className="setup-card"><div className="brand-icon"><Icon name="heart" size={30}/></div><h1>hverdags<span>.</span></h1><p>Prosjektet er klart til å kobles til en database.</p><div className="info-panel">Opprett et Supabase-prosjekt, kjør <code>supabase/schema.sql</code>, og fyll inn <code>.env.local</code> som beskrevet i README.</div></div></main>;
   if(initializing||homeLoading) return <main className="fullscreen"><div className="loading"><span className="brand-icon"><Icon name="heart"/></span><p>Gjør Hverdags klart …</p></div></main>;
@@ -293,6 +346,7 @@ export default function Home() {
             {nextEvents.map(ev=><div key={ev.id} className="event-row"><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleDateString(locale,{day:'numeric'})}</strong><span>{new Date(ev.starts_at).toLocaleDateString(locale,{month:'short'})}</span></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><SmallBadge type={ev.visibility}/><span>{new Date(ev.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})}</span></div></div></div>)}
             {!nextEvents.length&&<Empty title="Åpen kalender" detail="Legg inn noe hyggelig dere skal gjøre."/>}
             <button className="panel-add" onClick={()=>openEventEditor()}><Icon name="plus" size={17}/> Legg til avtale</button></section></div>
+        <section className="panel meal-teaser"><div><div className="eyebrow">MAT HJEMME HOS OSS</div><h2>Hva blir det til middag?</h2><p>{todayMeal?`${todayMeal.meal_name}${todayMeal.status==='eaten'?' · Spist':' · Planlagt'}`:'Ikke bestemt ennå – planlegg middagen sammen.'}</p></div><button className="small-link" onClick={()=>setPage('meals')}>Matplan <Icon name="chevron" size={15}/></button></section>
       </>}
       {page==='tasks'&&<><section className="section-header"><div><div className="eyebrow">SMÅ STEG, STOR FORSKJELL</div><h1>Oppgaver</h1><p>Hold oversikt over det du gjør alene, og det dere gjør sammen.</p></div><button className="primary" onClick={()=>openTaskEditor()}><Icon name="plus" size={18}/> Ny oppgave</button></section>
         <section className="panel list-panel"><div className="panel-head"><h2>Å gjøre <span className="round-count">{visibleOpenTasks.length}</span></h2></div><div className="filters" aria-label="Filtrer oppgaver">{(['all','shared','private'] as const).map(f=><button key={f} className={taskFilter===f?'active':''} onClick={()=>setTaskFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>{visibleOpenTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle" onClick={()=>{void toggleTask(task);}} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span>Frist {niceDate(task.due_on)}</span>}</div></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}{!visibleOpenTasks.length&&<Empty title="Alt er gjort" detail="Legg til en oppgave når det dukker opp noe."/>}</section>
@@ -302,9 +356,31 @@ export default function Home() {
         {groceries.map(item=><div key={item.id} className={`task-row ${item.checked?'dimmed':''}`}><button className={`check-circle ${item.checked?'checked':''}`} onClick={()=>{void toggleGrocery(item);}} aria-label={`${item.checked?'Fjern kryss':'Marker kjøpt'} ${item.name}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{item.name}</strong></div><button className="remove" onClick={()=>{void remove('hd_shopping_items',item.id);}} aria-label={`Slett ${item.name}`}><Icon name="trash" size={17}/></button></div>)}{!groceries.length&&<Empty title="Handlelisten er tom" detail="Legg til den første varen over."/>}</section></>}
       {page==='calendar'&&<><section className="section-header"><div><div className="eyebrow">PLASS TIL DET SOM BETYR NOE</div><h1>Kalender</h1><p>Ha oversikt over private og felles planer.</p></div><button className="primary" onClick={()=>openEventEditor()}><Icon name="plus" size={18}/> Ny avtale</button></section><section className="panel list-panel"><div className="panel-head"><h2>Avtaler <span className="round-count">{visibleEvents.length}</span></h2></div><div className="filters" aria-label="Filtrer avtaler">{(['all','shared','private'] as const).map(f=><button key={f} className={eventFilter===f?'active':''} onClick={()=>setEventFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>
         {visibleEvents.map(ev=><div key={ev.id} className="event-row"><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleDateString(locale,{day:'numeric'})}</strong><span>{new Date(ev.starts_at).toLocaleDateString(locale,{month:'short'})}</span></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><SmallBadge type={ev.visibility}/><span>{niceEventDate(ev.starts_at)}</span></div></div><button className="edit-button" onClick={()=>openEventEditor(ev)} aria-label={`Rediger ${ev.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_events',ev.id);}} aria-label={`Slett ${ev.title}`}><Icon name="trash" size={17}/></button></div>)}{!visibleEvents.length&&<Empty title="Ingen avtaler enda" detail="Legg til en plan – bare for deg, eller for dere begge."/>}</section></>}
+      {page==='meals'&&<>
+        <section className="section-header"><div><div className="eyebrow">VÅRE MIDDAGER</div><h1>Matkalender</h1><p>Planlegg middagene sammen, og husk hva dere faktisk spiste.</p></div><button className="primary" onClick={()=>openMealEditor(todayStr(),meals.find(m=>m.meal_date===todayStr()))}><Icon name="plus" size={18}/> Middag</button></section>
+        <section className="panel meal-section">
+          <div className="meal-week-head"><div><div className="eyebrow">UKEPLAN</div><h2>{niceDate(displayedWeek[0])} – {niceDate(displayedWeek[6])}</h2><p>{plannedThisWeek} av 7 dager planlagt · {meals.filter(m=>displayedWeek.includes(m.meal_date)&&m.status==='eaten').length} spist</p></div>
+            <div className="week-controls"><button type="button" className="icon-btn" aria-label="Forrige uke" onClick={()=>setMealWeek(shiftISODate(mealWeek,-7))}><Icon name="left"/></button><button type="button" className="today-btn" disabled={mealWeek===currentMonday} onClick={()=>setMealWeek(currentMonday)}>Denne uken</button><button type="button" className="icon-btn" aria-label="Neste uke" onClick={()=>setMealWeek(shiftISODate(mealWeek,7))}><Icon name="chevron"/></button></div>
+          </div>
+          <div className="meal-week-grid">{displayedWeek.map(date=>{
+            const meal=meals.find(m=>m.meal_date===date);
+            const isToday=date===todayStr();
+            const dateObj=new Date(date+'T12:00:00');
+            return <article key={date} className={`meal-day ${isToday?'is-today':''} ${meal?.status==='eaten'?'is-eaten':''}`}>
+              <header className="meal-day-head"><div><span>{dateObj.toLocaleDateString(locale,{weekday:'short'})}</span><strong>{dateObj.toLocaleDateString(locale,{day:'numeric'})}</strong></div>{isToday&&<span className="today-pill">I dag</span>}</header>
+              {meal?<>
+                <div className="meal-main"><span className={`meal-status ${meal.status}`}>{meal.status==='eaten'?'✓ Spist':'Planlagt'}</span><strong>{meal.status==='eaten'?(meal.actual_meal||meal.meal_name):meal.meal_name}</strong>{meal.status==='eaten'&&meal.actual_meal&&meal.actual_meal!==meal.meal_name&&<p>Planlagt: {meal.meal_name}</p>}{meal.notes&&<p>{meal.notes}</p>}</div>
+                <div className="meal-actions"><button type="button" disabled={busy} className="meal-action-done" onClick={()=>{void toggleMeal(meal);}}>{meal.status==='eaten'?'Angre spist':'Marker spist'}</button><button type="button" aria-label={`Rediger ${meal.meal_name}`} className="meal-action-icon" onClick={()=>openMealEditor(date,meal)}><Icon name="edit" size={16}/></button><button type="button" aria-label={`Slett ${meal.meal_name}`} className="meal-action-icon" onClick={()=>{void removeMeal(meal);}}><Icon name="trash" size={16}/></button></div>
+              </>:<button className="meal-add-day" type="button" onClick={()=>openMealEditor(date)}><Icon name="plus" size={18}/><span>Planlegg middag</span></button>}
+            </article>;
+          })}</div>
+          <p className="meal-hint">Bla bakover for å se hva dere spiste tidligere uker. Begge kan endre planen.</p>
+        </section>
+      </>}
       <footer className="page-footer"><Icon name="heart" size={14}/> Litt mindre stress, litt mer oss.</footer>
     </main></div>
     <nav className="bottom-nav" aria-label="Hovedmeny">{nav.map(([id,label,icon])=><button key={id} className={page===id?'selected':''} onClick={()=>setPage(id)}><Icon name={icon} size={21}/><span>{label}</span></button>)}</nav>
+    {modal==='meal'&&<Modal title={editingMeal?'Rediger middag':'Planlegg middag'} onClose={closeModal}><form onSubmit={saveMeal} className="dialog-form"><label>Dato<input type="date" value={mealDate} onChange={e=>setMealDate(e.target.value)} required/></label><label>Hva skal dere spise?<input autoFocus value={mealName} onChange={e=>setMealName(e.target.value)} placeholder="F.eks. kyllingwok" maxLength={100} required/></label>{editingMeal?.status==='eaten'&&<label>Det dere faktisk spiste<input value={mealActual} onChange={e=>setMealActual(e.target.value)} maxLength={100} placeholder={mealName||'Hva spiste dere?'}/></label>}<label>Notat (valgfritt)<textarea value={mealNotes} onChange={e=>setMealNotes(e.target.value)} maxLength={500} rows={3} placeholder="F.eks. oppskrift, tilbehør eller restemat"/></label><p className="helper">Middagsplanen er felles for begge. Etter maten kan dere trykke «Marker spist».</p>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre middag'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {modal==='task'&&<Modal title={editingTask?"Rediger oppgave":"Ny oppgave"} onClose={closeModal}><form onSubmit={saveTask} className="dialog-form"><label>Hva skal gjøres?<input autoFocus value={taskTitle} onChange={e=>setTaskTitle(e.target.value)} maxLength={100} placeholder="F.eks. vaske klær" required/></label><label>Frist (valgfritt)<input type="date" value={taskDue} onChange={e=>setTaskDue(e.target.value)}/></label><div className="form-label">Hvem kan se den?</div><div className="visibility-grid"><button type="button" disabled={!!editingTask} className={taskVisibility==='private'?'chosen':''} onClick={()=>setTaskVisibility('private')}><Icon name="lock" size={18}/><strong>Kun meg</strong><small>Privat</small></button><button type="button" disabled={!!editingTask} className={taskVisibility==='shared'?'chosen':''} onClick={()=>setTaskVisibility('shared')}><Icon name="users" size={18}/><strong>Felles</strong><small>Synlig for begge</small></button></div>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':editingTask?'Lagre endringer':'Legg til oppgave'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {modal==='event'&&<Modal title={editingEvent?"Rediger avtale":"Ny avtale"} onClose={closeModal}><form onSubmit={saveEvent} className="dialog-form"><label>Hva skal skje?<input autoFocus value={eventTitle} onChange={e=>setEventTitle(e.target.value)} maxLength={100} placeholder="F.eks. middag sammen" required/></label><label>Når?<input type="datetime-local" value={eventDate} onChange={e=>setEventDate(e.target.value)} required/></label><div className="form-label">Hvem kan se den?</div><div className="visibility-grid"><button type="button" disabled={!!editingEvent} className={eventVisibility==='private'?'chosen':''} onClick={()=>setEventVisibility('private')}><Icon name="lock" size={18}/><strong>Kun meg</strong><small>Privat</small></button><button type="button" disabled={!!editingEvent} className={eventVisibility==='shared'?'chosen':''} onClick={()=>setEventVisibility('shared')}><Icon name="users" size={18}/><strong>Felles</strong><small>Synlig for begge</small></button></div>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':editingEvent?'Lagre endringer':'Legg til avtale'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {showCode&&<Modal title="Inviter kjæresten din" onClose={()=>setShowCode(false)}><div className="invite-content"><div className="invite-graphic"><Icon name="heart" size={32}/></div><p>Be kjæresten din lage en konto i Hverdags og velge <b>«Bli med»</b>. Del denne koden privat:</p><div className="invite-code">{household.invite_code}</div><button className="primary full" onClick={()=>{if(navigator.clipboard)void navigator.clipboard.writeText(household.invite_code).then(()=>setNotice('Invitasjonskoden er kopiert')).catch(()=>setNotice('Marker og kopier koden manuelt'));else setNotice('Marker og kopier koden manuelt');setShowCode(false);}}><Icon name="copy" size={18}/> Kopier invitasjonskode</button><p className="helper">Hvert hjem har plass til to personer. Koden gir tilgang til felles innhold, så del den kun med kjæresten din.</p><button className="text-button" onClick={()=>{setShowCode(false);void api.auth.signOut();}}>Logg ut</button></div></Modal>}
