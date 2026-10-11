@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { configured, supabase } from '@/lib/supabase';
-import type { Event as HomeEvent, Grocery, Household, MealPlan, Page, Task, Visibility, Recipe, Routine, RoutineCompletion } from '@/lib/models';
+import type { Event as HomeEvent, Grocery, Household, MealPlan, Page, Task, Visibility, Recipe, Routine, RoutineCompletion, MemberProfile } from '@/lib/models';
 import { routineOccurrences } from '@/lib/routines.mjs';
 import { mondayOfWeek, shiftISODate, weekDates } from '@/lib/meal-dates.mjs';
 
@@ -69,6 +69,7 @@ export default function Home() {
   const [recipes,setRecipes] = useState<Recipe[]>([]);
   const [routines,setRoutines] = useState<Routine[]>([]);
   const [routineCompletions,setRoutineCompletions] = useState<RoutineCompletion[]>([]);
+  const [memberProfiles,setMemberProfiles] = useState<MemberProfile[]>([]);
   const [overviewWeek,setOverviewWeek] = useState(()=>mondayOfWeek(new Date()));
   const [recipeFilter,setRecipeFilter] = useState<'all'|'favorites'>('all');
   const [editingRecipe,setEditingRecipe] = useState<Recipe|null>(null);
@@ -130,7 +131,7 @@ export default function Home() {
   },[api]);
 
   useEffect(()=>{
-    if (!user) { setHousehold(null);setTasks([]);setGroceries([]);setEvents([]);setMeals([]);setRecipes([]);setRoutines([]);setRoutineCompletions([]);setPage('home'); }
+    if (!user) { setHousehold(null);setTasks([]);setGroceries([]);setEvents([]);setMeals([]);setRecipes([]);setRoutines([]);setRoutineCompletions([]);setMemberProfiles([]);setPage('home'); }
   },[user]);
 
   const loadHome = useCallback(async()=>{
@@ -146,9 +147,18 @@ export default function Home() {
   },[api,user]);
   useEffect(()=>{void loadHome();},[loadHome]);
 
+  // Only a profile's owner can write it; other household members can read the name.
+  useEffect(()=>{
+    if(!api||!user||!household) return;
+    const name=String(user.user_metadata?.display_name||user.user_metadata?.full_name||user.email?.split('@')[0]||'Medlem').trim().slice(0,60);
+    void api.from('hd_member_profiles').upsert({user_id:user.id,household_id:household.id,display_name:name},{onConflict:'user_id'}).then(({error})=>{
+      if(error) setNotice(error.message);
+    });
+  },[api,user,household]);
+
   const loadData = useCallback(async()=>{
     if (!api||!user||!household) return;
-    const [a,b,c,d,e,f,g] = await Promise.all([
+    const [a,b,c,d,e,f,g,h] = await Promise.all([
       api.from('hd_tasks').select('*').order('created_at',{ascending:false}),
       api.from('hd_shopping_items').select('*').eq('household_id',household.id).order('created_at',{ascending:false}),
       api.from('hd_events').select('*').order('starts_at',{ascending:true}),
@@ -156,8 +166,9 @@ export default function Home() {
       api.from('hd_recipes').select('*').eq('household_id',household.id).order('favorite',{ascending:false}).order('name'),
       api.from('hd_routines').select('*').order('created_at',{ascending:false}),
       api.from('hd_routine_completions').select('*').order('occurrence_date',{ascending:false}).limit(500),
+      api.from('hd_member_profiles').select('user_id,household_id,display_name').eq('household_id',household.id),
     ]);
-    if (a.error||b.error||c.error||d.error||e.error||f.error||g.error) setNotice(a.error?.message||b.error?.message||c.error?.message||d.error?.message||e.error?.message||f.error?.message||g.error?.message||'Kunne ikke hente data');
+    if (a.error||b.error||c.error||d.error||e.error||f.error||g.error||h.error) setNotice(a.error?.message||b.error?.message||c.error?.message||d.error?.message||e.error?.message||f.error?.message||g.error?.message||h.error?.message||'Kunne ikke hente data');
     if (a.data) setTasks(a.data as Task[]);
     if (b.data) setGroceries(b.data as Grocery[]);
     if (c.data) setEvents(c.data as HomeEvent[]);
@@ -165,6 +176,7 @@ export default function Home() {
     if (e.data) setRecipes(e.data as Recipe[]);
     if (f.data) setRoutines(f.data as Routine[]);
     if (g.data) setRoutineCompletions(g.data as RoutineCompletion[]);
+    if (h.data) setMemberProfiles(h.data as MemberProfile[]);
   },[api,user,household]);
   useEffect(()=>{void loadData();},[loadData]);
   useEffect(()=>{
@@ -177,6 +189,7 @@ export default function Home() {
       .on('postgres_changes',{event:'*',schema:'public',table:'hd_recipes'},()=>{void loadData();})
       .on('postgres_changes',{event:'*',schema:'public',table:'hd_routines'},()=>{void loadData();})
       .on('postgres_changes',{event:'*',schema:'public',table:'hd_routine_completions'},()=>{void loadData();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'hd_member_profiles'},()=>{void loadData();})
       .subscribe();
     const interval=setInterval(()=>{void loadData();},30000); // reserve ved tapte Realtime-hendelser
     const onFocus=()=>{void loadData();};
@@ -362,11 +375,12 @@ export default function Home() {
     setGroceryName('');await loadData();
   }
   async function toggleTask(task:Task){
-    if(!api)return;
-    setTasks(a=>a.map(t=>t.id===task.id?{...t,completed:!t.completed}:t));
+    if(!api||busy)return;
+    setBusy(true);setNotice('');
+    // A database trigger stamps auth.uid() and server time on completion.
     const {error}=await api.from('hd_tasks').update({completed:!task.completed}).eq('id',task.id);
     if(error)setNotice(error.message);
-    await loadData();
+    await loadData();setBusy(false);
   }
   async function toggleGrocery(item:Grocery){
     if(!api)return;
@@ -396,7 +410,20 @@ export default function Home() {
   const currentRoutines=routineOccurrences(routines,mondayOfWeek(new Date()));
   const humanToday=new Date().toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'long'});
   const displayedWeek=weekDates(mealWeek);
-  const routineDone=(id:string,date:string)=>routineCompletions.some(c=>c.routine_id===id&&c.occurrence_date===date);
+  const routineCompletion=(id:string,date:string)=>routineCompletions.find(c=>c.routine_id===id&&c.occurrence_date===date);
+  const routineDone=(id:string,date:string)=>Boolean(routineCompletion(id,date));
+  const memberName=(id:string|null|undefined)=>{
+    if(!id)return 'ukjent';
+    const profile=memberProfiles.find(p=>p.user_id===id);
+    if(profile?.display_name)return profile.display_name;
+    if(id===user?.id)return String(user?.user_metadata?.display_name||user?.user_metadata?.full_name||'deg').trim();
+    return 'den andre';
+  };
+  const fullfilledBy=(id:string|null|undefined,when:string|null|undefined)=>{
+    if(!id)return 'Fullført før historikk ble aktivert';
+    const whenLabel=when?` · ${new Date(when).toLocaleDateString(locale,{day:'numeric',month:'short'})}`:'';
+    return `Fullført av ${memberName(id)}${whenLabel}`;
+  };
   const filteredRoutines=currentRoutines.filter(r=>taskFilter==='all'||r.visibility===taskFilter);
   const shownRecipes=recipes.filter(r=>recipeFilter==='all'||r.favorite);
   const currentMonday=mondayOfWeek(new Date());
@@ -457,7 +484,7 @@ export default function Home() {
         </div>
         <div className="practical-grid">
           <section className="panel practical-panel" aria-labelledby="home-tasks-title"><div className="panel-head"><div><div className="eyebrow">TING Å FÅ GJORT</div><h2 id="home-tasks-title">Oppgaver <span className="round-count">{openTasks.length}</span></h2></div><button className="small-link" type="button" onClick={()=>setPage('tasks')}>Se alle <Icon name="chevron" size={16}/></button></div>
-            {priorityTasks.slice(0,4).map(task=><div className="task-row" key={task.id}><button className="check-circle" type="button" onClick={()=>{void toggleTask(task);}} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span className={task.due_on<today?'overdue':''}>{task.due_on<today?'Forfalt · ':''}{niceDate(task.due_on)}</span>}</div></div></div>)}
+            {priorityTasks.slice(0,4).map(task=><div className="task-row" key={task.id}><button className="check-circle" type="button" onClick={()=>{void toggleTask(task);}} disabled={busy} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span className={task.due_on<today?'overdue':''}>{task.due_on<today?'Forfalt · ':''}{niceDate(task.due_on)}</span>}</div></div></div>)}
             {openTasks.length===0&&<div className="compact-empty"><Icon name="check" size={20}/><p>Alt er gjort for nå.</p></div>}
             <button type="button" className="panel-add" onClick={()=>openTaskEditor()}><Icon name="plus" size={18}/> Ny oppgave</button>
           </section>
@@ -480,19 +507,19 @@ export default function Home() {
               <button type="button" className="weekly-meal" onClick={()=>openMealEditor(day,meal)}><Icon name="meals" size={16}/><span>{meal?.status==='eaten'?(meal.actual_meal||meal.meal_name):meal?.meal_name||'Planlegg middag'}</span>{meal?.status==='eaten'&&<span className="weekly-done">Spist</span>}</button>
               {dayEvents.map(event=><div className="weekly-detail" key={event.id}><Icon name="calendar" size={15}/><span>{new Date(event.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})} · {event.title}</span>{event.visibility==='private'&&<Icon name="lock" size={13}/>}</div>)}
               {dayTasks.map(task=><div className="weekly-detail" key={task.id}><Icon name="tasks" size={15}/><span>{task.title}</span>{task.visibility==='private'&&<Icon name="lock" size={13}/>}</div>)}
-              {dayRoutines.map(routine=><button type="button" key={routine.id} className={`weekly-detail weekly-routine ${routineDone(routine.id,day)?'is-done':''}`} onClick={()=>{void toggleRoutine(routine,day);}} disabled={busy}><Icon name={routineDone(routine.id,day)?'check':'repeat'} size={15}/><span>{routine.title}</span>{routine.visibility==='private'&&<Icon name="lock" size={13}/>}</button>)}
+              {dayRoutines.map(routine=><button type="button" key={routine.id} className={`weekly-detail weekly-routine ${routineDone(routine.id,day)?'is-done':''}`} onClick={()=>{void toggleRoutine(routine,day);}} disabled={busy}><Icon name={routineDone(routine.id,day)?'check':'repeat'} size={15}/><span>{routine.title}{routineCompletion(routine.id,day)&&<span className="weekly-completed-by"> · {memberName(routineCompletion(routine.id,day)?.completed_by)}</span>}</span>{routine.visibility==='private'&&<Icon name="lock" size={13}/>}</button>)}
             </div></div>;
           })}</div><p className="meal-hint">Lås-ikon betyr privat. Klikk på middagen for å endre, eller på en fast oppgave for å markere den som gjort.</p>
         </section>
       </>}
       {page==='tasks'&&<><section className="section-header"><div><div className="eyebrow">SMÅ STEG, STOR FORSKJELL</div><h1>Oppgaver</h1><p>Hold oversikt over det du gjør alene, og det dere gjør sammen.</p></div><button className="primary" onClick={()=>openTaskEditor()}><Icon name="plus" size={18}/> Ny oppgave</button></section>
-        <section className="panel list-panel"><div className="panel-head"><h2>Å gjøre <span className="round-count">{visibleOpenTasks.length}</span></h2></div><div className="filters" aria-label="Filtrer oppgaver">{(['all','shared','private'] as const).map(f=><button key={f} className={taskFilter===f?'active':''} onClick={()=>setTaskFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>{visibleOpenTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle" onClick={()=>{void toggleTask(task);}} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span>Frist {niceDate(task.due_on)}</span>}</div></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}{!visibleOpenTasks.length&&<Empty title="Alt er gjort" detail="Legg til en oppgave når det dukker opp noe."/>}</section>
-        {!!visibleDoneTasks.length&&<section className="panel list-panel done-panel"><h2>Fullført</h2>{visibleDoneTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle checked" onClick={()=>{void toggleTask(task);}} aria-label={`Gjenåpne ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}</section>}
+        <section className="panel list-panel"><div className="panel-head"><h2>Å gjøre <span className="round-count">{visibleOpenTasks.length}</span></h2></div><div className="filters" aria-label="Filtrer oppgaver">{(['all','shared','private'] as const).map(f=><button key={f} className={taskFilter===f?'active':''} onClick={()=>setTaskFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>{visibleOpenTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle" onClick={()=>{void toggleTask(task);}} disabled={busy} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span>Frist {niceDate(task.due_on)}</span>}</div></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}{!visibleOpenTasks.length&&<Empty title="Alt er gjort" detail="Legg til en oppgave når det dukker opp noe."/>}</section>
+        {!!visibleDoneTasks.length&&<section className="panel list-panel done-panel"><h2>Fullført</h2>{visibleDoneTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle checked" onClick={()=>{void toggleTask(task);}} disabled={busy} aria-label={`Gjenåpne ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><span className="completion-info"><Icon name="users" size={13}/>{fullfilledBy(task.completed_by,task.completed_at)}</span></div></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}</section>}
         <section className="panel routine-section" aria-labelledby="routines-title">
           <div className="panel-head"><div><div className="eyebrow">HUSARBEID SOM GJENTAR SEG</div><h2 id="routines-title">Faste oppgaver <span className="round-count">{filteredRoutines.length}</span></h2><p className="weekly-subtitle">Denne uken · Marker som gjort, så dukker oppgaven opp igjen neste gang.</p></div><button type="button" className="secondary-action" onClick={()=>openRoutineEditor()}><Icon name="plus" size={17}/> Fast oppgave</button></div>
           {filteredRoutines.map(routine=><div className="task-row" key={routine.id}>
             <button type="button" disabled={busy} className={`check-circle ${routineDone(routine.id,routine.occurrence_date)?'checked':''}`} onClick={()=>{void toggleRoutine(routine,routine.occurrence_date);}} aria-label={`${routineDone(routine.id,routine.occurrence_date)?'Angre':'Fullfør'} ${routine.title}`}><Icon name="check" size={14}/></button>
-            <div className="item-text"><strong className={routineDone(routine.id,routine.occurrence_date)?'muted-strike':''}>{routine.title}</strong><div className="item-meta"><SmallBadge type={routine.visibility}/><span>{niceDate(routine.occurrence_date)} · {routine.interval_weeks===1?'Hver uke':'Annenhver uke'}</span></div></div>
+            <div className="item-text"><strong className={routineDone(routine.id,routine.occurrence_date)?'muted-strike':''}>{routine.title}</strong><div className="item-meta"><SmallBadge type={routine.visibility}/><span>{niceDate(routine.occurrence_date)} · {routine.interval_weeks===1?'Hver uke':'Annenhver uke'}</span>{routineCompletion(routine.id,routine.occurrence_date)&&<span className="completion-info"><Icon name="users" size={13}/>{fullfilledBy(routineCompletion(routine.id,routine.occurrence_date)?.completed_by,routineCompletion(routine.id,routine.occurrence_date)?.created_at)}</span>}</div></div>
             <button className="edit-button" type="button" aria-label={`Rediger ${routine.title}`} onClick={()=>openRoutineEditor(routine)}><Icon name="edit" size={17}/></button>
             <button className="remove" type="button" aria-label={`Slett ${routine.title}`} onClick={()=>{void removeRoutine(routine);}}><Icon name="trash" size={17}/></button>
           </div>)}
@@ -541,7 +568,44 @@ export default function Home() {
     {modal==='meal'&&<Modal title={editingMeal?'Rediger middag':'Planlegg middag'} onClose={closeModal}><form onSubmit={saveMeal} className="dialog-form"><label>Dato<input type="date" value={mealDate} onChange={e=>setMealDate(e.target.value)} required/></label><label>Velg fra middagsbiblioteket (valgfritt)<select value={selectedRecipeId} onChange={e=>{const r=recipes.find(item=>item.id===e.target.value);setSelectedRecipeId(e.target.value);if(r)setMealName(r.name);}}><option value="">Skriv en egen middag</option>{recipes.map(r=><option key={r.id} value={r.id}>{r.favorite?"★ ":""}{r.name}</option>)}</select></label><label>Hva skal dere spise?<input autoFocus value={mealName} onChange={e=>setMealName(e.target.value)} placeholder="F.eks. kyllingwok" maxLength={100} required/></label>{editingMeal?.status==='eaten'&&<label>Det dere faktisk spiste<input value={mealActual} onChange={e=>setMealActual(e.target.value)} maxLength={100} placeholder={mealName||'Hva spiste dere?'}/></label>}<label>Notat (valgfritt)<textarea value={mealNotes} onChange={e=>setMealNotes(e.target.value)} maxLength={500} rows={3} placeholder="F.eks. oppskrift, tilbehør eller restemat"/></label><p className="helper">Middagsplanen er felles for begge. Etter maten kan dere trykke «Marker spist».</p>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre middag'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {modal==='recipe'&&<Modal title={editingRecipe?'Rediger oppskrift':'Ny oppskrift'} onClose={closeModal}><form onSubmit={saveRecipe} className="dialog-form"><label>Navn på middag<input value={recipeName} onChange={e=>setRecipeName(e.target.value)} maxLength={100} placeholder="F.eks. pasta med pesto" autoFocus required/></label><label>Ingredienser (valgfritt)<textarea rows={5} maxLength={4000} value={recipeIngredients} onChange={e=>setRecipeIngredients(e.target.value)} placeholder="Skriv én ingrediens per linje"/></label><label>Fremgangsmåte (valgfritt)<textarea rows={4} maxLength={4000} value={recipeInstructions} onChange={e=>setRecipeInstructions(e.target.value)} placeholder="Hvordan lager dere retten?"/></label><label className="checkbox-label"><input type="checkbox" checked={recipeFavorite} onChange={e=>setRecipeFavorite(e.target.checked)}/> Legg til som favoritt</label>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre oppskrift'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {modal==='routine'&&<Modal title={editingRoutine?'Rediger fast oppgave':'Ny fast oppgave'} onClose={closeModal}><form onSubmit={saveRoutine} className="dialog-form"><label>Hva skal gjøres?<input autoFocus value={routineTitle} onChange={e=>setRoutineTitle(e.target.value)} maxLength={100} required placeholder="F.eks. vaske bad"/></label><label>Første gang<input type="date" value={routineStart} onChange={e=>setRoutineStart(e.target.value)} required/></label><label>Gjentas<select value={routineInterval} onChange={e=>setRoutineInterval(Number(e.target.value) as 1|2)}><option value={1}>Hver uke</option><option value={2}>Annenhver uke</option></select></label><div className="form-label">Hvem kan se oppgaven?</div><div className="visibility-grid"><button type="button" disabled={!!editingRoutine} className={routineVisibility==='private'?'chosen':''} onClick={()=>setRoutineVisibility('private')}><Icon name="lock" size={18}/><strong>Kun meg</strong><small>Privat</small></button><button type="button" disabled={!!editingRoutine} className={routineVisibility==='shared'?'chosen':''} onClick={()=>setRoutineVisibility('shared')}><Icon name="users" size={18}/><strong>Felles</strong><small>Begge kan krysse av</small></button></div><p className="helper">En fast oppgave dukker automatisk opp på samme ukedag. Når den er utført, kommer den tilbake neste uke eller annenhver uke.</p>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre fast oppgave'}<Icon name="arrow" size={18}/></button></form></Modal>}
-    {modal==='task'&&<Modal title={editingTask?"Rediger oppgave":"Ny oppgave"} onClose={closeModal}><form onSubmit={saveTask} className="dialog-form"><label>Hva skal gjøres?<input autoFocus value={taskTitle} onChange={e=>setTaskTitle(e.target.value)} maxLength={100} placeholder="F.eks. vaske klær" required/></label><label>Frist (valgfritt)<input type="date" value={taskDue} onChange={e=>setTaskDue(e.target.value)}/></label><div className="form-label">Hvem kan se den?</div><div className="visibility-grid"><button type="button" disabled={!!editingTask} className={taskVisibility==='private'?'chosen':''} onClick={()=>setTaskVisibility('private')}><Icon name="lock" size={18}/><strong>Kun meg</strong><small>Privat</small></button><button type="button" disabled={!!editingTask} className={taskVisibility==='shared'?'chosen':''} onClick={()=>setTaskVisibility('shared')}><Icon name="users" size={18}/><strong>Felles</strong><small>Synlig for begge</small></button></div>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':editingTask?'Lagre endringer':'Legg til oppgave'}<Icon name="arrow" size={18}/></button></form></Modal>}
+    {modal==='task'&&<Modal title={editingTask?'Rediger oppgave':'Ny oppgave'} onClose={closeModal}>
+      <form onSubmit={saveTask} className="dialog-form task-editor">
+        <p className="task-editor-lead">{editingTask?'Oppdater beskrivelsen eller fristen.':'Få det ut av hodet og inn i oversikten deres.'}</p>
+        <section className="task-editor-section">
+          <span className="task-editor-step"><span>1</span> Hva skal gjøres?</span>
+          <label htmlFor="task-editor-title" className="task-editor-label">Oppgave
+            <input id="task-editor-title" autoFocus value={taskTitle} onChange={e=>setTaskTitle(e.target.value)} maxLength={100} placeholder="F.eks. vaske badet" required/>
+          </label>
+          {!editingTask&&<div className="task-suggestions" aria-label="Forslag til oppgaver">
+            {['Vaske badet','Ta ut søppelet','Støvsuge'].map(label=><button key={label} type="button" onClick={()=>setTaskTitle(label)}>{label}</button>)}
+          </div>}
+        </section>
+        <section className="task-editor-section">
+          <span className="task-editor-step"><span>2</span> Når passer det?</span>
+          <div className="task-date-options" role="group" aria-label="Velg frist">
+            {[{label:'Ingen frist',value:''},{label:'I dag',value:todayStr()},{label:'I morgen',value:shiftISODate(todayStr(),1)}].map(option=><button key={option.label} type="button" className={taskDue===option.value?'active':''} aria-pressed={taskDue===option.value} onClick={()=>setTaskDue(option.value)}>{option.label}</button>)}
+          </div>
+          <label htmlFor="task-editor-date" className="task-editor-label">Eller velg en dato
+            <input id="task-editor-date" type="date" value={taskDue} onChange={e=>setTaskDue(e.target.value)}/>
+          </label>
+        </section>
+        <section className="task-editor-section">
+          <span className="task-editor-step"><span>3</span> Hvem skal se den?</span>
+          <div className="task-visibility-options" role="group" aria-label="Hvem skal se oppgaven?">
+            <button type="button" disabled={!!editingTask} aria-pressed={taskVisibility==='shared'} className={taskVisibility==='shared'?'selected':''} onClick={()=>setTaskVisibility('shared')}>
+              <span className="visibility-symbol"><Icon name="users" size={19}/></span><span><strong>Felles oppgave</strong><small>Synlig for dere begge</small></span><span className="selection-dot" aria-hidden="true"/>
+            </button>
+            <button type="button" disabled={!!editingTask} aria-pressed={taskVisibility==='private'} className={taskVisibility==='private'?'selected':''} onClick={()=>setTaskVisibility('private')}>
+              <span className="visibility-symbol"><Icon name="lock" size={19}/></span><span><strong>Bare for meg</strong><small>Kun synlig på din konto</small></span><span className="selection-dot" aria-hidden="true"/>
+            </button>
+          </div>
+          {editingTask&&<p className="task-editor-note">Synlighet kan ikke endres på en eksisterende oppgave. Lag en ny for å endre den.</p>}
+        </section>
+        {notice&&<div className="notice" role="alert">{notice}</div>}
+        <button className="primary full task-submit" disabled={busy||!taskTitle.trim()}>{busy?'Lagrer …':editingTask?'Lagre endringer':'Legg til oppgave'}<Icon name="check" size={19}/></button>
+        {!editingTask&&<button className="task-repeat-link" type="button" onClick={()=>{closeModal();openRoutineEditor();}}><Icon name="repeat" size={17}/> Skal den gjentas? Lag en fast oppgave <Icon name="chevron" size={15}/></button>}
+      </form>
+    </Modal>}
     {modal==='event'&&<Modal title={editingEvent?"Rediger avtale":"Ny avtale"} onClose={closeModal}><form onSubmit={saveEvent} className="dialog-form"><label>Hva skal skje?<input autoFocus value={eventTitle} onChange={e=>setEventTitle(e.target.value)} maxLength={100} placeholder="F.eks. middag sammen" required/></label><label>Når?<input type="datetime-local" value={eventDate} onChange={e=>setEventDate(e.target.value)} required/></label><div className="form-label">Hvem kan se den?</div><div className="visibility-grid"><button type="button" disabled={!!editingEvent} className={eventVisibility==='private'?'chosen':''} onClick={()=>setEventVisibility('private')}><Icon name="lock" size={18}/><strong>Kun meg</strong><small>Privat</small></button><button type="button" disabled={!!editingEvent} className={eventVisibility==='shared'?'chosen':''} onClick={()=>setEventVisibility('shared')}><Icon name="users" size={18}/><strong>Felles</strong><small>Synlig for begge</small></button></div>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':editingEvent?'Lagre endringer':'Legg til avtale'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {showCode&&<Modal title="Inviter kjæresten din" onClose={()=>setShowCode(false)}><div className="invite-content"><div className="invite-graphic"><Icon name="heart" size={32}/></div><p>Be kjæresten din lage en konto i Hverdags og velge <b>«Bli med»</b>. Del denne koden privat:</p><div className="invite-code">{household.invite_code}</div><button className="primary full" onClick={()=>{if(navigator.clipboard)void navigator.clipboard.writeText(household.invite_code).then(()=>setNotice('Invitasjonskoden er kopiert')).catch(()=>setNotice('Marker og kopier koden manuelt'));else setNotice('Marker og kopier koden manuelt');setShowCode(false);}}><Icon name="copy" size={18}/> Kopier invitasjonskode</button><p className="helper">Hvert hjem har plass til to personer. Koden gir tilgang til felles innhold, så del den kun med kjæresten din.</p><button className="text-button" onClick={()=>{setShowCode(false);void api.auth.signOut();}}>Logg ut</button></div></Modal>}
   </div>;

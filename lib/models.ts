@@ -3,6 +3,7 @@ export type Task = {
   id: string; owner_id: string; household_id: string | null;
   visibility: Visibility; title: string; completed: boolean;
   due_on: string | null; created_at: string;
+  completed_by: string | null; completed_at: string | null;
 };
 export type Grocery = {
   id: string; household_id: string; added_by: string;
@@ -34,3 +35,5 @@ export type RoutineCompletion = {
   id: string; routine_id: string; occurrence_date: string;
   completed_by: string; created_at: string;
 };
+
+export type MemberProfile = { user_id: string; household_id: string; display_name: string };
