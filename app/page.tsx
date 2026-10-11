@@ -6,6 +6,8 @@ import { configured, supabase } from '@/lib/supabase';
 import type { Event as HomeEvent, Grocery, Household, Page, Task, Visibility } from '@/lib/models';
 
 const locale = 'nb-NO';
+// Bekreftelseslenker fra Supabase skal tilbake til riktig repo-sti.
+const authRedirectUrl = () => `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/`;
 const niceDate = (day: string) => new Date(day + 'T12:00:00').toLocaleDateString(locale, { day:'numeric', month:'short' });
 const niceEventDate = (day: string) => new Date(day).toLocaleDateString(locale, { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
@@ -143,7 +145,7 @@ export default function Home() {
     e.preventDefault();if(!api)return;
     setNotice('');setBusy(true);
     const result=authMode==='signup'
-      ? await api.auth.signUp({email:email.trim(),password,options:{emailRedirectTo:window.location.origin,data:{display_name:authName.trim()}}})
+      ? await api.auth.signUp({email:email.trim(),password,options:{emailRedirectTo:authRedirectUrl(),data:{display_name:authName.trim()}}})
       : await api.auth.signInWithPassword({email:email.trim(),password});
     setBusy(false);
     if(result.error) {setNotice(result.error.message);return;}
@@ -178,7 +180,7 @@ export default function Home() {
   async function sendPasswordReset(){
     if(!api||!email.trim()) {setNotice('Skriv inn e-postadressen din først.');return;}
     setBusy(true);setNotice('');
-    const {error}=await api.auth.resetPasswordForEmail(email.trim(),{redirectTo:window.location.origin});
+    const {error}=await api.auth.resetPasswordForEmail(email.trim(),{redirectTo:authRedirectUrl()});
     setBusy(false);setNotice(error?error.message:'Hvis adressen har en konto, får du en e-post med lenke for nytt passord.');
   }
   async function saveNewPassword(e:FormEvent){

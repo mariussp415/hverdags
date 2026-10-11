@@ -5,12 +5,13 @@ echo.
 echo   H V E R D A G S  1.0
 echo.
 if not exist ".env.local" (
-  echo MANGLER .env.local. Opprett denne fra .env.local.example
-  echo og fyll inn Supabase Project URL og publishable key.
-  echo Les START-HER.txt for instruksjoner.
-  echo.
-  pause
-  exit /b 1
+  if exist ".env.local.example" (
+    copy ".env.local.example" ".env.local" >nul
+  ) else (
+    echo Oppsettet mangler .env.local.example.
+    pause
+    exit /b 1
+  )
 )
 where npm.cmd >nul 2>&1
 if errorlevel 1 (
@@ -20,7 +21,11 @@ if errorlevel 1 (
 )
 if not exist "node_modules\.bin\next.cmd" (
   echo Installerer pakker ...
-  call npm.cmd install
+  if exist "package-lock.json" (
+    call npm.cmd ci
+  ) else (
+    call npm.cmd install
+  )
   if errorlevel 1 (
     echo Installasjonen feilet. Kopier feilmeldingen.
     pause

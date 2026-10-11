@@ -1,18 +1,10 @@
-HVERDAGS 1.0 – EGET GRATIS SUPABASE-PROSJEKT
-==========================================
+HVERDAGS — GITHUB PAGES
 
-Hverdags har nå sin egen Supabase-database og egen innlogging.
-PingPong-prosjektet er urørt. Vektappens Supabase-prosjekt er pauset,
-slik at prosjektgrensen på gratisnivå ikke overskrides.
-Vektdataene er beholdt i det pausede prosjektet.
+1. Les README.md i denne mappen.
+2. Opprett offentlig repository «hverdags» på github.com/new.
+3. Push prosjektfilene fra VS Code/terminal.
+4. GitHub Settings → Pages → Source: GitHub Actions.
+5. Supabase → Authentication → URL Configuration: legg inn GitHub Pages-lenken.
+6. Opprett egne brukere for deg og kjæresten.
 
-1. Pakk ut ZIP-en i en ny mappe. Ikke bland med den gamle Hverdags-mappen.
-2. Dobbeltklikk START-HVERDAGS.bat.
-3. Åpne http://localhost:3000.
-4. Opprett to brukere, lag ett felles hjem og inviter den andre med kode.
-
-Hvis du bruker PowerShell:
-    npm.cmd install
-    npm.cmd run dev
-
-Les README.md for eventuelle e-postredirects og videre oppsett.
+NB: Ikke kjør supabase/schema.sql på nytt.

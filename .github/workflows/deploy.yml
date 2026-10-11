@@ -1,0 +1,59 @@
+name: Publiser Hverdags på GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Finn riktig basePath for repository
+        shell: bash
+        run: |
+          repo="${GITHUB_REPOSITORY#*/}"
+          owner="${GITHUB_REPOSITORY%%/*}"
+          if [[ "${repo,,}" == "${owner,,}.github.io" ]]; then
+            echo 'NEXT_PUBLIC_BASE_PATH=' >> "$GITHUB_ENV"
+          else
+            echo "NEXT_PUBLIC_BASE_PATH=/$repo" >> "$GITHUB_ENV"
+          fi
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - name: Bygg statisk nettsted
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ysmlqcpgmweelvmraynr.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ekcXw3jujAuezH6aSGWdtg_QUYtfum5
+      - name: Last opp GitHub Pages-artefakt
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./out
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publiser Hverdags
+        id: deployment
+        uses: actions/deploy-pages@v4
