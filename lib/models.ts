@@ -19,3 +19,18 @@ export type MealPlan = {
   status: 'planned' | 'eaten'; eaten_at: string | null; created_at: string;
 };
 export type Page = 'home' | 'tasks' | 'shopping' | 'calendar' | 'meals';
+
+export type Recipe = {
+  id: string; household_id: string; created_by: string;
+  name: string; ingredients: string; instructions: string;
+  favorite: boolean; created_at: string;
+};
+export type Routine = {
+  id: string; household_id: string | null; owner_id: string;
+  visibility: Visibility; title: string; start_on: string;
+  interval_weeks: 1 | 2; created_at: string;
+};
+export type RoutineCompletion = {
+  id: string; routine_id: string; occurrence_date: string;
+  completed_by: string; created_at: string;
+};
