@@ -5,7 +5,8 @@ import type { User } from '@supabase/supabase-js';
 import { configured, supabase } from '@/lib/supabase';
 import type { Event as HomeEvent, Grocery, Household, MealPlan, Page, Task, Visibility, Recipe, Routine, RoutineCompletion, MemberProfile } from '@/lib/models';
 import { routineOccurrences } from '@/lib/routines.mjs';
-import { mondayOfWeek, shiftISODate, weekDates } from '@/lib/meal-dates.mjs';
+import { mondayOfWeek, shiftISODate, weekDates, localISODate } from '@/lib/meal-dates.mjs';
+import { monthGrid, shiftMonth } from '@/lib/calendar.mjs';
 
 const locale = 'nb-NO';
 // Bekreftelseslenker fra Supabase skal tilbake til riktig repo-sti.
@@ -96,6 +97,8 @@ export default function Home() {
   const [editingEvent,setEditingEvent] = useState<HomeEvent|null>(null);
   const [taskFilter,setTaskFilter] = useState<'all'|'private'|'shared'>('all');
   const [eventFilter,setEventFilter] = useState<'all'|'private'|'shared'>('all');
+  const [calendarMonth,setCalendarMonth] = useState(()=>todayStr().slice(0,7));
+  const [selectedCalendarDay,setSelectedCalendarDay] = useState(()=>todayStr());
   const [passwordRecovery,setPasswordRecovery] = useState(false);
   const [newPassword,setNewPassword] = useState('');
   const [authMode,setAuthMode] = useState<'login'|'signup'>('login');
@@ -223,13 +226,13 @@ export default function Home() {
     setTaskTitle(task?.title??'');setTaskDue(task?.due_on??'');
     setTaskVisibility(task?.visibility??'shared');setModal('task');
   }
-  function openEventEditor(event?:HomeEvent){
+  function openEventEditor(event?:HomeEvent, date?:string){
     setNotice('');setEditingEvent(event??null);
     setEventTitle(event?.title??'');setEventVisibility(event?.visibility??'shared');
     // datetime-local bruker lokal tid, ikke UTC. Unngå å flytte avtalen ved redigering.
     if(event){const d=new Date(event.starts_at);const offset=d.getTimezoneOffset()*60000;
       setEventDate(new Date(d.getTime()-offset).toISOString().slice(0,16));}
-    else setEventDate('');
+    else setEventDate(date?`${date}T18:00`:'');
     setModal('event');
   }
   function openMealEditor(date:string, meal?:MealPlan){
@@ -401,7 +404,18 @@ export default function Home() {
   const visibleOpenTasks=openTasks.filter(item=>taskFilter==='all'||item.visibility===taskFilter)
     .sort((a,b)=>(a.due_on||'9999-12-31').localeCompare(b.due_on||'9999-12-31'));
   const visibleDoneTasks=tasks.filter(item=>item.completed&&(taskFilter==='all'||item.visibility===taskFilter));
+  const recentCompleted=[
+    ...tasks.filter(item=>item.completed).map(item=>({id:`task-${item.id}`,title:item.title,visibility:item.visibility,completedBy:item.completed_by,when:item.completed_at||item.created_at,kind:'task'})),
+    ...routineCompletions.flatMap(item=>{
+      const routine=routines.find(r=>r.id===item.routine_id);
+      return routine?[{id:`routine-${item.id}`,title:routine.title,visibility:routine.visibility,completedBy:item.completed_by,when:item.created_at,kind:'routine'}]:[];
+    }),
+  ].sort((a,b)=>new Date(b.when).getTime()-new Date(a.when).getTime()).slice(0,4);
   const visibleEvents=events.filter(item=>eventFilter==='all'||item.visibility===eventFilter);
+  const calendarDays=monthGrid(calendarMonth);
+  const selectedCalendarEvents=visibleEvents.filter(ev=>localISODate(new Date(ev.starts_at))===selectedCalendarDay);
+  const calendarTitle=new Date(`${calendarMonth}-01T12:00:00`).toLocaleDateString(locale,{month:'long',year:'numeric'});
+  const selectedDayTitle=new Date(`${selectedCalendarDay}T12:00:00`).toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'long'});
   const unchecked=groceries.filter(item=>!item.checked);
   const groceriesToShow=[...groceries].sort((a,b)=>Number(a.checked)-Number(b.checked));
   const priorityTasks=[...openTasks].sort((a,b)=>(a.due_on||'9999-12-31').localeCompare(b.due_on||'9999-12-31'));
@@ -494,6 +508,13 @@ export default function Home() {
             <form className="inline-grocery" onSubmit={saveGrocery}><label className="sr-only" htmlFor="home-grocery">Legg til vare</label><input id="home-grocery" value={groceryName} onChange={e=>setGroceryName(e.target.value)} maxLength={100} placeholder="Legg til vare ..." required/><button type="submit" aria-label="Legg til vare" disabled={busy}><Icon name="plus" size={19}/></button></form>
           </section>
         </div>
+        <section className="panel home-completed" aria-labelledby="recent-completed-title">
+          <div className="panel-head"><div><div className="eyebrow">TING DERE HAR FÅTT GJORT</div><h2 id="recent-completed-title">Fullført nylig</h2></div><button type="button" className="small-link" onClick={()=>{setTaskFilter('all');setPage('tasks');}}>Alle oppgaver <Icon name="chevron" size={16}/></button></div>
+          {recentCompleted.length ? <div className="home-completed-list">{recentCompleted.map(item=><div className="home-completed-row" key={item.id}>
+            <span className="completed-mark"><Icon name="check" size={16}/></span>
+            <div className="item-text"><strong>{item.title}</strong><div className="item-meta"><span className="completion-info">{fullfilledBy(item.completedBy,item.when)}</span><SmallBadge type={item.visibility}/>{item.kind==='routine'&&<span>Fast oppgave</span>}</div></div>
+          </div>)}</div>:<div className="compact-empty"><Icon name="check" size={20}/><p>Ingen fullførte oppgaver ennå. De dukker opp her når dere krysser av.</p></div>}
+        </section>
         <section className="panel weekly-overview" aria-labelledby="home-week-title">
           <div className="panel-head week-overview-head"><div><div className="eyebrow">ALT PÅ ETT STED</div><h2 id="home-week-title">Uken vår</h2><p className="weekly-subtitle">Middag, avtaler og det som skal gjøres · {niceDate(previewWeek[0])} – {niceDate(previewWeek[6])}</p></div>
             <div className="week-controls"><button type="button" className="icon-btn" aria-label="Forrige uke" onClick={()=>setOverviewWeek(shiftISODate(overviewWeek,-7))}><Icon name="left"/></button><button type="button" className="today-btn" disabled={overviewWeek===currentMonday} onClick={()=>setOverviewWeek(currentMonday)}>Denne uken</button><button type="button" className="icon-btn" aria-label="Neste uke" onClick={()=>setOverviewWeek(shiftISODate(overviewWeek,7))}><Icon name="chevron"/></button></div></div>
@@ -530,8 +551,33 @@ export default function Home() {
       </>}
       {page==='shopping'&&<><section className="section-header"><div><div className="eyebrow">HANDLE SAMMEN</div><h1>Handleliste</h1><p>Den samme listen for dere begge – alltid oppdatert.</p></div></section><section className="panel list-panel"><div className="panel-head"><h2>På listen <span className="round-count">{unchecked.length}</span></h2><SmallBadge type="shared"/></div><form onSubmit={saveGrocery} className="shopping-form"><input value={groceryName} onChange={e=>setGroceryName(e.target.value)} maxLength={100} placeholder="F.eks. melk, brød eller kaffe" required/><button className="primary" disabled={busy} aria-label="Legg til vare"><Icon name="plus"/></button></form>
         {groceriesToShow.map(item=><div key={item.id} className={`task-row ${item.checked?'dimmed':''}`}><button className={`check-circle ${item.checked?'checked':''}`} onClick={()=>{void toggleGrocery(item);}} aria-label={`${item.checked?'Fjern kryss':'Marker kjøpt'} ${item.name}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{item.name}</strong></div><button className="remove" onClick={()=>{void remove('hd_shopping_items',item.id);}} aria-label={`Slett ${item.name}`}><Icon name="trash" size={17}/></button></div>)}{!groceries.length&&<Empty title="Handlelisten er tom" detail="Legg til den første varen over."/>}</section></>}
-      {page==='calendar'&&<><section className="section-header"><div><div className="eyebrow">PLASS TIL DET SOM BETYR NOE</div><h1>Kalender</h1><p>Ha oversikt over private og felles planer.</p></div><button className="primary" onClick={()=>openEventEditor()}><Icon name="plus" size={18}/> Ny avtale</button></section><section className="panel list-panel"><div className="panel-head"><h2>Avtaler <span className="round-count">{visibleEvents.length}</span></h2></div><div className="filters" aria-label="Filtrer avtaler">{(['all','shared','private'] as const).map(f=><button key={f} className={eventFilter===f?'active':''} onClick={()=>setEventFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>
-        {visibleEvents.map(ev=><div key={ev.id} className="event-row"><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleDateString(locale,{day:'numeric'})}</strong><span>{new Date(ev.starts_at).toLocaleDateString(locale,{month:'short'})}</span></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><SmallBadge type={ev.visibility}/><span>{niceEventDate(ev.starts_at)}</span></div></div><button className="edit-button" onClick={()=>openEventEditor(ev)} aria-label={`Rediger ${ev.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_events',ev.id);}} aria-label={`Slett ${ev.title}`}><Icon name="trash" size={17}/></button></div>)}{!visibleEvents.length&&<Empty title="Ingen avtaler enda" detail="Legg til en plan – bare for deg, eller for dere begge."/>}</section></>}
+      {page==='calendar'&&<>
+        <section className="section-header"><div><div className="eyebrow">ALLE DAGENE DERES</div><h1>Kalender</h1><p>En enkel månedsoversikt for private og felles avtaler.</p></div><button type="button" className="primary" onClick={()=>openEventEditor(undefined,selectedCalendarDay)}><Icon name="plus" size={18}/> Ny avtale</button></section>
+        <section className="panel calendar-panel" aria-labelledby="month-title">
+          <div className="calendar-toolbar">
+            <div><div className="eyebrow">MÅNEDSOVERSIKT</div><h2 id="month-title" className="calendar-month-title">{calendarTitle}</h2></div>
+            <div className="month-controls"><button type="button" className="icon-btn month-nav" onClick={()=>setCalendarMonth(v=>shiftMonth(v,-1))} aria-label="Forrige måned"><Icon name="left"/></button><button type="button" className="today-btn" onClick={()=>{setCalendarMonth(today.slice(0,7));setSelectedCalendarDay(today);}}>I dag</button><button type="button" className="icon-btn month-nav" onClick={()=>setCalendarMonth(v=>shiftMonth(v,1))} aria-label="Neste måned"><Icon name="chevron"/></button></div>
+          </div>
+          <div className="filters" aria-label="Vis avtaler">{(['all','shared','private'] as const).map(f=><button type="button" key={f} className={eventFilter===f?'active':''} aria-pressed={eventFilter===f} onClick={()=>setEventFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>
+          <div className="month-calendar" aria-label={`Kalender for ${calendarTitle}`}>
+            <div className="month-weekdays">{['Man','Tir','Ons','Tor','Fre','Lør','Søn'].map(day=><div key={day}>{day}</div>)}</div>
+            <div className="month-grid">{calendarDays.map(day=>{
+              const dayEvents=visibleEvents.filter(ev=>localISODate(new Date(ev.starts_at))===day);
+              const isCurrentMonth=day.slice(0,7)===calendarMonth;
+              return <div className={`month-cell ${!isCurrentMonth?'outside-month':''} ${day===today?'month-today':''} ${day===selectedCalendarDay?'month-selected':''}`} key={day}>
+                <button type="button" className="month-day-button" aria-label={`${new Date(`${day}T12:00:00`).toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'long'})}, ${dayEvents.length} avtaler`} aria-pressed={day===selectedCalendarDay} onClick={()=>{setSelectedCalendarDay(day);if(!isCurrentMonth)setCalendarMonth(day.slice(0,7));}}><span className="month-day-number">{Number(day.slice(-2))}</span><span className="month-event-dots" aria-hidden="true">{dayEvents.slice(0,3).map(ev=><span className={ev.visibility==='private'?'month-dot-private':'month-dot-shared'} key={ev.id}/>)}</span><span className="month-day-events">{dayEvents.slice(0,2).map(ev=><span className={`month-event-chip ${ev.visibility}`} key={ev.id}>{ev.title}</span>)}{dayEvents.length>2&&<span className="month-more">+{dayEvents.length-2} til</span>}</span></button>
+                <button type="button" className="month-day-add" aria-label={`Legg til avtale ${niceDate(day)}`} title="Ny avtale" onClick={()=>{setSelectedCalendarDay(day);setCalendarMonth(day.slice(0,7));openEventEditor(undefined,day);}}><Icon name="plus" size={15}/></button>
+              </div>;
+            })}</div>
+          </div>
+          <div className="calendar-key"><span><i className="calendar-key-dot shared"/> Felles</span><span><i className="calendar-key-dot private"/> Privat</span><span>Trykk på en dato for å se avtalene.</span></div>
+        </section>
+        <section className="panel calendar-day-panel" aria-labelledby="selected-day-title">
+          <div className="panel-head"><div><div className="eyebrow">VALGT DATO</div><h2 id="selected-day-title">{selectedDayTitle}</h2></div><button type="button" className="secondary-action" onClick={()=>openEventEditor(undefined,selectedCalendarDay)}><Icon name="plus" size={16}/> Legg til avtale</button></div>
+          {selectedCalendarEvents.map(ev=><div key={ev.id} className="event-row"><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})}</strong></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><SmallBadge type={ev.visibility}/></div></div><button type="button" className="edit-button" onClick={()=>openEventEditor(ev)} aria-label={`Rediger ${ev.title}`}><Icon name="edit" size={17}/></button><button type="button" className="remove" onClick={()=>{void remove('hd_events',ev.id);}} aria-label={`Slett ${ev.title}`}><Icon name="trash" size={17}/></button></div>)}
+          {!selectedCalendarEvents.length&&<div className="compact-empty"><Icon name="calendar" size={21}/><p>Ingen avtaler denne dagen.</p><button type="button" onClick={()=>openEventEditor(undefined,selectedCalendarDay)}>Legg til en avtale <Icon name="chevron" size={15}/></button></div>}
+        </section>
+      </>}
       {page==='meals'&&<>
         <section className="section-header"><div><div className="eyebrow">VÅRE MIDDAGER</div><h1>Matkalender</h1><p>Planlegg middagene sammen, og husk hva dere faktisk spiste.</p></div><button className="primary" onClick={()=>openMealEditor(todayStr(),meals.find(m=>m.meal_date===todayStr()))}><Icon name="plus" size={18}/> Middag</button></section>
         <section className="panel meal-section">
