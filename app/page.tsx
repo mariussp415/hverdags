@@ -72,6 +72,7 @@ export default function Home() {
   const [routineCompletions,setRoutineCompletions] = useState<RoutineCompletion[]>([]);
   const [memberProfiles,setMemberProfiles] = useState<MemberProfile[]>([]);
   const [overviewWeek,setOverviewWeek] = useState(()=>mondayOfWeek(new Date()));
+  const [expandedWeekDay,setExpandedWeekDay] = useState<string|null>(null);
   const [recipeFilter,setRecipeFilter] = useState<'all'|'favorites'>('all');
   const [editingRecipe,setEditingRecipe] = useState<Recipe|null>(null);
   const [recipeName,setRecipeName] = useState('');
@@ -421,6 +422,7 @@ export default function Home() {
   const priorityTasks=[...openTasks].sort((a,b)=>(a.due_on||'9999-12-31').localeCompare(b.due_on||'9999-12-31'));
   const today=todayStr();
   const previewWeek=weekDates(overviewWeek);
+  const overviewRoutines=routineOccurrences(routines,overviewWeek);
   const currentRoutines=routineOccurrences(routines,mondayOfWeek(new Date()));
   const humanToday=new Date().toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'long'});
   const displayedWeek=weekDates(mealWeek);
@@ -517,20 +519,44 @@ export default function Home() {
         </section>
         <section className="panel weekly-overview" aria-labelledby="home-week-title">
           <div className="panel-head week-overview-head"><div><div className="eyebrow">ALT PÅ ETT STED</div><h2 id="home-week-title">Uken vår</h2><p className="weekly-subtitle">Middag, avtaler og det som skal gjøres · {niceDate(previewWeek[0])} – {niceDate(previewWeek[6])}</p></div>
-            <div className="week-controls"><button type="button" className="icon-btn" aria-label="Forrige uke" onClick={()=>setOverviewWeek(shiftISODate(overviewWeek,-7))}><Icon name="left"/></button><button type="button" className="today-btn" disabled={overviewWeek===currentMonday} onClick={()=>setOverviewWeek(currentMonday)}>Denne uken</button><button type="button" className="icon-btn" aria-label="Neste uke" onClick={()=>setOverviewWeek(shiftISODate(overviewWeek,7))}><Icon name="chevron"/></button></div></div>
-          <div className="weekly-agenda">{previewWeek.map(day=>{
+            <div className="week-controls"><button type="button" className="icon-btn" aria-label="Forrige uke" onClick={()=>{setOverviewWeek(shiftISODate(overviewWeek,-7));setExpandedWeekDay(null);}}><Icon name="left"/></button><button type="button" className="today-btn" disabled={overviewWeek===currentMonday} onClick={()=>{setOverviewWeek(currentMonday);setExpandedWeekDay(null);}}>Denne uken</button><button type="button" className="icon-btn" aria-label="Neste uke" onClick={()=>{setOverviewWeek(shiftISODate(overviewWeek,7));setExpandedWeekDay(null);}}><Icon name="chevron"/></button></div></div>
+          <div className="weekly-agenda" aria-label="Ukeoversikt, sveip vannrett på mobil">{previewWeek.map(day=>{
             const meal=meals.find(item=>item.meal_date===day);
             const dayEvents=events.filter(item=>new Date(item.starts_at).toLocaleDateString('sv-SE')===day);
             const dayTasks=tasks.filter(item=>!item.completed&&item.due_on===day);
-            const dayRoutines=routineOccurrences(routines,overviewWeek).filter(item=>item.occurrence_date===day);
+            const dayRoutines=overviewRoutines.filter(item=>item.occurrence_date===day);
+            const firstEvent=dayEvents[0];
+            const firstTask=firstEvent?undefined:dayTasks[0];
+            const firstRoutine=firstEvent||firstTask?undefined:dayRoutines[0];
+            const extraCount=dayEvents.length+dayTasks.length+dayRoutines.length-(firstEvent||firstTask||firstRoutine?1:0);
             const dateObj=new Date(day+'T12:00:00');
-            return <div className={`weekly-day ${day===today?'is-today':''}`} key={day}><div className="weekly-day-label"><strong>{dateObj.toLocaleDateString(locale,{weekday:'short'})}</strong><span>{dateObj.toLocaleDateString(locale,{day:'numeric',month:'short'})}</span></div><div className="weekly-day-content">
-              <button type="button" className="weekly-meal" onClick={()=>openMealEditor(day,meal)}><Icon name="meals" size={16}/><span>{meal?.status==='eaten'?(meal.actual_meal||meal.meal_name):meal?.meal_name||'Planlegg middag'}</span>{meal?.status==='eaten'&&<span className="weekly-done">Spist</span>}</button>
-              {dayEvents.map(event=><div className="weekly-detail" key={event.id}><Icon name="calendar" size={15}/><span>{new Date(event.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})} · {event.title}</span>{event.visibility==='private'&&<Icon name="lock" size={13}/>}</div>)}
-              {dayTasks.map(task=><div className="weekly-detail" key={task.id}><Icon name="tasks" size={15}/><span>{task.title}</span>{task.visibility==='private'&&<Icon name="lock" size={13}/>}</div>)}
-              {dayRoutines.map(routine=><button type="button" key={routine.id} className={`weekly-detail weekly-routine ${routineDone(routine.id,day)?'is-done':''}`} onClick={()=>{void toggleRoutine(routine,day);}} disabled={busy}><Icon name={routineDone(routine.id,day)?'check':'repeat'} size={15}/><span>{routine.title}{routineCompletion(routine.id,day)&&<span className="weekly-completed-by"> · {memberName(routineCompletion(routine.id,day)?.completed_by)}</span>}</span>{routine.visibility==='private'&&<Icon name="lock" size={13}/>}</button>)}
-            </div></div>;
-          })}</div><p className="meal-hint">Lås-ikon betyr privat. Klikk på middagen for å endre, eller på en fast oppgave for å markere den som gjort.</p>
+            return <div className={`weekly-day ${day===today?'is-today':''}`} key={day}>
+              <div className="weekly-day-label"><strong>{dateObj.toLocaleDateString(locale,{weekday:'short'})}</strong><span>{dateObj.toLocaleDateString(locale,{day:'numeric',month:'short'})}</span>{day===today&&<span className="weekly-today-tag">I dag</span>}</div>
+              <div className="weekly-day-content">
+                <button type="button" className="weekly-meal" aria-label={`${day}: ${meal?.meal_name||'Planlegg middag'}`} onClick={()=>openMealEditor(day,meal)}><Icon name="meals" size={16}/><span>{meal?.status==='eaten'?(meal.actual_meal||meal.meal_name):meal?.meal_name||'Planlegg middag'}</span>{meal?.status==='eaten'&&<Icon name="check" size={14}/>}</button>
+                {firstEvent&&<div className="weekly-detail" title={firstEvent.title}><Icon name="calendar" size={15}/><span>{new Date(firstEvent.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})} · {firstEvent.title}</span>{firstEvent.visibility==='private'&&<Icon name="lock" size={13}/>}</div>}
+                {firstTask&&<div className="weekly-detail" title={firstTask.title}><Icon name="tasks" size={15}/><span>{firstTask.title}</span>{firstTask.visibility==='private'&&<Icon name="lock" size={13}/>}</div>}
+                {firstRoutine&&<button type="button" className={`weekly-detail weekly-routine ${routineDone(firstRoutine.id,day)?'is-done':''}`} onClick={()=>{void toggleRoutine(firstRoutine,day);}} disabled={busy}><Icon name={routineDone(firstRoutine.id,day)?'check':'repeat'} size={15}/><span>{firstRoutine.title}</span></button>}
+                {extraCount>0&&<button type="button" className="weekly-more" aria-expanded={expandedWeekDay===day} aria-controls="week-day-expanded" onClick={()=>setExpandedWeekDay(current=>current===day?null:day)}>{expandedWeekDay===day?'Skjul detaljer':`+ ${extraCount} flere`} <Icon name="chevron" size={14}/></button>}
+              </div>
+            </div>;
+          })}</div>
+          {expandedWeekDay&&previewWeek.includes(expandedWeekDay)&&(()=>{
+            const day=expandedWeekDay;
+            const dayEvents=events.filter(item=>new Date(item.starts_at).toLocaleDateString('sv-SE')===day);
+            const dayTasks=tasks.filter(item=>!item.completed&&item.due_on===day);
+            const dayRoutines=overviewRoutines.filter(item=>item.occurrence_date===day);
+            const dayLabel=new Date(day+'T12:00:00').toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'long'});
+            return <div className="weekly-expanded" id="week-day-expanded" role="region" aria-label={`Detaljer for ${dayLabel}`}>
+              <div className="weekly-expanded-head"><h3>{dayLabel}</h3><div className="weekly-expanded-actions"><button type="button" className="weekly-expanded-add" onClick={()=>openEventEditor(undefined,day)}><Icon name="plus" size={15}/> Avtale</button><button type="button" className="weekly-expanded-close" onClick={()=>setExpandedWeekDay(null)} aria-label="Lukk dagsdetaljer"><Icon name="close" size={17}/></button></div></div>
+              <div className="weekly-expanded-list">
+                {dayEvents.map(event=><div className="weekly-detail" key={event.id}><Icon name="calendar" size={16}/><span>{new Date(event.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})} · {event.title}</span>{event.visibility==='private'&&<Icon name="lock" size={13}/>}</div>)}
+                {dayTasks.map(task=><div className="weekly-detail" key={task.id}><Icon name="tasks" size={16}/><span>{task.title}</span>{task.visibility==='private'&&<Icon name="lock" size={13}/>}</div>)}
+                {dayRoutines.map(routine=><button type="button" key={routine.id} className={`weekly-detail weekly-routine ${routineDone(routine.id,day)?'is-done':''}`} onClick={()=>{void toggleRoutine(routine,day);}} disabled={busy}><Icon name={routineDone(routine.id,day)?'check':'repeat'} size={16}/><span>{routine.title}{routineCompletion(routine.id,day)&&<span className="weekly-completed-by"> · {memberName(routineCompletion(routine.id,day)?.completed_by)}</span>}</span>{routine.visibility==='private'&&<Icon name="lock" size={13}/>}</button>)}
+              </div>
+            </div>;
+          })()}
+          <p className="meal-hint">Middagene kan endres direkte fra ukeoversikten. Trykk «+ flere» for å se alt som skjer en dag. <span className="weekly-mobile-hint">Sveip sideveis for å se hele uken.</span></p>
         </section>
       </>}
       {page==='tasks'&&<><section className="section-header"><div><div className="eyebrow">SMÅ STEG, STOR FORSKJELL</div><h1>Oppgaver</h1><p>Hold oversikt over det du gjør alene, og det dere gjør sammen.</p></div><button className="primary" onClick={()=>openTaskEditor()}><Icon name="plus" size={18}/> Ny oppgave</button></section>
