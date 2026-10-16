@@ -602,7 +602,7 @@ export default function Home() {
             <div className="month-controls"><button type="button" className="icon-btn month-nav" onClick={()=>setCalendarMonth(v=>shiftMonth(v,-1))} aria-label="Forrige måned"><Icon name="left"/></button><button type="button" className="today-btn" onClick={()=>{setCalendarMonth(today.slice(0,7));setSelectedCalendarDay(today);}}>I dag</button><button type="button" className="icon-btn month-nav" onClick={()=>setCalendarMonth(v=>shiftMonth(v,1))} aria-label="Neste måned"><Icon name="chevron"/></button></div>
           </div>
           <div className="filters" aria-label="Vis avtaler">{(['all','shared','private'] as const).map(f=><button type="button" key={f} className={eventFilter===f?'active':''} aria-pressed={eventFilter===f} onClick={()=>setEventFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>
-          <div className="month-calendar" aria-label={`Kalender for ${calendarTitle}`}>
+          <div className="month-calendar" role="region" tabIndex={0} aria-label={`Kalender for ${calendarTitle}`}>
             <div className="month-weekdays">{['Man','Tir','Ons','Tor','Fre','Lør','Søn'].map(day=><div key={day}>{day}</div>)}</div>
             <div className="month-grid">{calendarDays.map(day=>{
               const dayEvents=visibleEvents.filter(ev=>localISODate(new Date(ev.starts_at))===day);
@@ -614,17 +614,10 @@ export default function Home() {
               </div>;
             })}</div>
           </div>
-          <div className="calendar-mobile-agenda" aria-label={`Avtaler i ${calendarTitle}`}>
-            {calendarDays.filter(day=>day.slice(0,7)===calendarMonth&&visibleEvents.some(ev=>localISODate(new Date(ev.starts_at))===day)).map(day=><section className={`agenda-date-group ${day===today?'agenda-today':''}`} key={day} aria-labelledby={`agenda-${day}`}>
-              <div className="agenda-date-heading"><h3 id={`agenda-${day}`}>{new Date(`${day}T12:00:00`).toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'short'})}{day===today&&<span className="today-pill">I dag</span>}</h3><button type="button" className="icon-btn" aria-label={`Legg til avtale ${niceDate(day)}`} onClick={()=>openEventEditor(undefined,day)}><Icon name="plus" size={18}/></button></div>
-              {visibleEvents.filter(ev=>localISODate(new Date(ev.starts_at))===day).map(ev=><div className="agenda-event-row" key={ev.id}><button type="button" className={`agenda-event ${ev.visibility}`} onClick={()=>openEventEditor(ev)} aria-label={`Rediger ${ev.title}, ${niceEventDate(ev.starts_at)}`}><time dateTime={ev.starts_at}>{new Date(ev.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})}</time><span className="agenda-event-text"><strong>{ev.title}</strong><SmallBadge type={ev.visibility}/></span><Icon name="edit" size={16}/></button><button type="button" className="remove agenda-remove" aria-label={`Slett ${ev.title}`} onClick={()=>{void remove('hd_events',ev.id);}}><Icon name="trash" size={17}/></button></div>)}
-            </section>)}
-            {!visibleEvents.some(ev=>localISODate(new Date(ev.starts_at)).slice(0,7)===calendarMonth)&&<div className="compact-empty"><Icon name="calendar" size={21}/><p>Ingen {eventFilter==='private'?'private ':eventFilter==='shared'?'felles ':''}avtaler denne måneden.</p></div>}
-            <button type="button" className="panel-add" onClick={()=>openEventEditor(undefined,calendarMonth===today.slice(0,7)?today:`${calendarMonth}-01`)}><Icon name="plus" size={18}/> Ny avtale</button>
-          </div>
+          <p className="calendar-scroll-hint">Sveip sidelengs for å se hele uken.</p>
           <div className="calendar-key"><span><i className="calendar-key-dot shared"/> Felles</span><span><i className="calendar-key-dot private"/> Privat</span><span>Trykk på en avtale for å redigere den.</span></div>
         </section>
-        <section className="panel calendar-day-panel calendar-desktop-day" aria-labelledby="selected-day-title">
+        <section className="panel calendar-day-panel" aria-labelledby="selected-day-title">
           <div className="panel-head"><div><div className="eyebrow">VALGT DATO</div><h2 id="selected-day-title">{selectedDayTitle}</h2></div><button type="button" className="secondary-action" onClick={()=>openEventEditor(undefined,selectedCalendarDay)}><Icon name="plus" size={16}/> Legg til avtale</button></div>
           {selectedCalendarEvents.map(ev=><div key={ev.id} className="event-row"><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})}</strong></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><SmallBadge type={ev.visibility}/></div></div><button type="button" className="edit-button" onClick={()=>openEventEditor(ev)} aria-label={`Rediger ${ev.title}`}><Icon name="edit" size={17}/></button><button type="button" className="remove" onClick={()=>{void remove('hd_events',ev.id);}} aria-label={`Slett ${ev.title}`}><Icon name="trash" size={17}/></button></div>)}
           {!selectedCalendarEvents.length&&<div className="compact-empty"><Icon name="calendar" size={21}/><p>Ingen avtaler denne dagen.</p><button type="button" onClick={()=>openEventEditor(undefined,selectedCalendarDay)}>Legg til en avtale <Icon name="chevron" size={15}/></button></div>}
