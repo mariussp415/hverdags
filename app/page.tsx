@@ -431,7 +431,6 @@ export default function Home() {
   const selectedGroceries=groceries.filter(item=>item.visibility===shoppingVisibility);
   const unchecked=selectedGroceries.filter(item=>!item.checked);
   const boughtGroceries=selectedGroceries.filter(item=>item.checked).sort((a,b)=>(b.checked_at||'').localeCompare(a.checked_at||''));
-  const priorityTasks=[...openTasks].sort((a,b)=>(a.due_on||'9999-12-31').localeCompare(b.due_on||'9999-12-31'));
   const today=todayStr();
   const previewWeek=weekDates(overviewWeek);
   const overviewRoutines=routineOccurrences(routines,overviewWeek);
@@ -453,6 +452,10 @@ export default function Home() {
     return `Fullført av ${memberName(id)}${whenLabel}`;
   };
   const filteredRoutines=currentRoutines.filter(r=>taskFilter==='all'||r.visibility===taskFilter);
+  const todayItems=[
+    ...openTasks.filter(task=>task.due_on&&task.due_on<=today).sort((a,b)=>a.due_on!.localeCompare(b.due_on!)).map(task=>({key:`task-${task.id}`,title:task.title,visibility:task.visibility,overdue:task.due_on!<today,kind:'Oppgave',complete:()=>{void toggleTask(task);}})),
+    ...currentRoutines.filter(r=>r.occurrence_date===today&&!routineDone(r.id,today)).map(r=>({key:`routine-${r.id}`,title:r.title,visibility:r.visibility,overdue:false,kind:'Fast oppgave',complete:()=>{void toggleRoutine(r,today);}})),
+  ];
   const shownRecipes=recipes.filter(r=>recipeFilter==='all'||r.favorite);
   const currentMonday=mondayOfWeek(new Date());
   const todayMeal=meals.find(meal=>meal.meal_date===today);
@@ -486,16 +489,10 @@ export default function Home() {
     <div className="main-area"><header className="topbar"><div className="mobile-brand"><div className="brand-icon mini"><Icon name="heart" size={18}/></div><span>hverdags<b>.</b></span></div><span className="topbar-house"><Icon name="home" size={15}/>{household.name}</span><div className="topbar-actions"><button className="icon-btn" title="Oppdater" aria-label="Oppdater innhold" onClick={()=>{void loadData();}}><Icon name="refresh" size={19}/></button><button className="avatar" title="Vis invitasjon" aria-label="Vis invitasjonskode og konto" onClick={()=>setShowCode(true)}>{displayName.slice(0,1).toUpperCase()}</button></div></header>
     <main className="content">
       {notice&&<div className="notice in-app" role="alert"><span>{notice}</span><button onClick={()=>setNotice('')} aria-label="Lukk melding"><Icon name="close" size={15}/></button></div>}
-      {page==='home'&&<>
+      {page==='home'&&<div className="calm-home">
         <section className="today-header" aria-labelledby="today-heading">
-          <div><div className="eyebrow">{household.name}</div><h1 id="today-heading">{greeting}, {displayName} <span className="today-wave" aria-hidden="true">☀</span></h1><p>{humanToday.charAt(0).toUpperCase()+humanToday.slice(1)} · Her er oversikten deres.</p></div>
-          <button type="button" className="home-invite" onClick={()=>setShowCode(true)}><Icon name="users" size={17}/> Del hjemmet</button>
+          <div><div className="eyebrow">{household.name}</div><h1 id="today-heading">{greeting}, {displayName}</h1><p>{humanToday.charAt(0).toUpperCase()+humanToday.slice(1)}</p></div>
         </section>
-        <div className="quick-actions" aria-label="Legg til nytt">
-          <button type="button" onClick={()=>openTaskEditor()}><Icon name="plus" size={17}/> Oppgave</button>
-          <button type="button" onClick={()=>openMealEditor(today,todayMeal)}><Icon name="meals" size={18}/> Middag</button>
-          <button type="button" onClick={()=>openEventEditor()}><Icon name="calendar" size={18}/> Avtale</button>
-        </div>
         <div className="today-feature-grid">
           <section className="today-meal-card" aria-labelledby="today-meal-title">
             <div className="feature-top"><span className="eyebrow">MIDDAG I DAG</span><span className="feature-date">{niceDate(today)}</span></div>
@@ -507,30 +504,20 @@ export default function Home() {
             </div>
           </section>
           <section className="next-up-card" aria-labelledby="next-up-title">
-            <div className="panel-head"><div><div className="eyebrow">DET NESTE SOM SKJER</div><h2 id="next-up-title">Avtaler</h2></div><button type="button" className="small-link" onClick={()=>setPage('calendar')}>Se alle <Icon name="chevron" size={16}/></button></div>
-            {nextEvents.length>0?<div className="next-events">{nextEvents.slice(0,2).map(ev=><div className="event-row" key={ev.id}><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleDateString(locale,{day:'numeric'})}</strong><span>{new Date(ev.starts_at).toLocaleDateString(locale,{month:'short'})}</span></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><span>{niceEventDate(ev.starts_at)}</span><SmallBadge type={ev.visibility}/></div></div></div>)}</div>:<div className="compact-empty"><Icon name="calendar" size={20}/><p>Ingen kommende avtaler.</p><button type="button" onClick={()=>openEventEditor()}>Legg til avtale <Icon name="chevron" size={15}/></button></div>}
+            <div className="panel-head"><div><div className="eyebrow">KALENDER</div><h2 id="next-up-title">Neste avtale</h2></div><button type="button" className="small-link" onClick={()=>setPage('calendar')}>Se alle <Icon name="chevron" size={16}/></button></div>
+            {nextEvents.length>0?<div className="next-events">{nextEvents.slice(0,1).map(ev=><div className="event-row" key={ev.id}><div className="event-date"><strong>{new Date(ev.starts_at).toLocaleDateString(locale,{day:'numeric'})}</strong><span>{new Date(ev.starts_at).toLocaleDateString(locale,{month:'short'})}</span></div><div className="item-text"><strong>{ev.title}</strong><div className="item-meta"><span>{niceEventDate(ev.starts_at)}</span><SmallBadge type={ev.visibility}/></div></div></div>)}</div>:<div className="compact-empty"><Icon name="calendar" size={20}/><p>Ingen kommende avtaler.</p><button type="button" onClick={()=>openEventEditor()}>Legg til avtale <Icon name="chevron" size={15}/></button></div>}
           </section>
         </div>
-        <div className="practical-grid">
-          <section className="panel practical-panel" aria-labelledby="home-tasks-title"><div className="panel-head"><div><div className="eyebrow">TING Å FÅ GJORT</div><h2 id="home-tasks-title">Oppgaver <span className="round-count">{openTasks.length}</span></h2></div><button className="small-link" type="button" onClick={()=>setPage('tasks')}>Se alle <Icon name="chevron" size={16}/></button></div>
-            {priorityTasks.slice(0,4).map(task=><div className="task-row" key={task.id}><button className="check-circle" type="button" onClick={()=>{void toggleTask(task);}} disabled={busy} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span className={task.due_on<today?'overdue':''}>{task.due_on<today?'Forfalt · ':''}{niceDate(task.due_on)}</span>}</div></div></div>)}
-            {openTasks.length===0&&<div className="compact-empty"><Icon name="check" size={20}/><p>Alt er gjort for nå.</p></div>}
-            <button type="button" className="panel-add" onClick={()=>openTaskEditor()}><Icon name="plus" size={18}/> Ny oppgave</button>
-          </section>
-          <section className="panel practical-panel" aria-labelledby="home-shopping-title"><div className="panel-head"><div><div className="eyebrow">PÅ HANDLELISTEN</div><h2 id="home-shopping-title">Handle <span className="round-count">{unchecked.length}</span></h2></div><button type="button" className="small-link" onClick={()=>setPage('shopping')}>Hele listen <Icon name="chevron" size={16}/></button></div>
-            {shoppingTabs}
-            {unchecked.slice(0,4).map(item=><div key={item.id} className="task-row"><button type="button" className="check-circle" onClick={()=>{void toggleGrocery(item);}} aria-label={`Marker ${item.name} som kjøpt`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{item.name}</strong></div></div>)}
-            {!unchecked.length&&<div className="compact-empty"><Icon name="shopping" size={20}/><p>Handlelisten er tom.</p></div>}
-            <form className="inline-grocery" onSubmit={saveGrocery}><label className="sr-only" htmlFor="home-grocery">Legg til vare</label><input id="home-grocery" value={groceryName} onChange={e=>setGroceryName(e.target.value)} maxLength={100} placeholder="Legg til vare ..." required/><button type="submit" aria-label="Legg til vare" disabled={busy}><Icon name="plus" size={19}/></button></form>
-          </section>
-        </div>
-        <section className="panel home-completed" aria-labelledby="recent-completed-title">
-          <div className="panel-head"><div><div className="eyebrow">TING DERE HAR FÅTT GJORT</div><h2 id="recent-completed-title">Fullført nylig</h2></div><button type="button" className="small-link" onClick={()=>{setTaskFilter('all');setPage('tasks');}}>Alle oppgaver <Icon name="chevron" size={16}/></button></div>
-          {recentCompleted.length ? <div className="home-completed-list">{recentCompleted.map(item=><div className="home-completed-row" key={item.id}>
-            <span className="completed-mark"><Icon name="check" size={16}/></span>
-            <div className="item-text"><strong>{item.title}</strong><div className="item-meta"><span className="completion-info">{fullfilledBy(item.completedBy,item.when)}</span><SmallBadge type={item.visibility}/>{item.kind==='routine'&&<span>Fast oppgave</span>}</div></div>
-          </div>)}</div>:<div className="compact-empty"><Icon name="check" size={20}/><p>Ingen fullførte oppgaver ennå. De dukker opp her når dere krysser av.</p></div>}
+        <section className="panel today-focus" aria-labelledby="home-tasks-title">
+          <div className="panel-head"><div><h2 id="home-tasks-title">Å gjøre i dag{todayItems.length>0&&<span className="round-count">{todayItems.length}</span>}</h2><p className="helper">Dagens oppgaver og det som gjenstår fra før.</p></div><button className="small-link" type="button" onClick={()=>setPage('tasks')}>Alle oppgaver <Icon name="chevron" size={16}/></button></div>
+          {todayItems.slice(0,3).map(item=><div className="task-row" key={item.key}><button className="check-circle" type="button" onClick={item.complete} disabled={busy} aria-label={`Fullfør ${item.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{item.title}</strong><div className="item-meta"><SmallBadge type={item.visibility}/>{item.overdue?<span className="overdue">Forfalt</span>:item.kind==='Fast oppgave'&&<span>Fast oppgave</span>}</div></div></div>)}
+          {!todayItems.length&&<div className="compact-empty"><Icon name="check" size={20}/><p>Ingen oppgaver med frist i dag. Litt mer rom i dagen.</p></div>}
+          <div className="today-task-footer"><button type="button" className="small-link" onClick={()=>openTaskEditor()}><Icon name="plus" size={16}/> Ny oppgave</button>{todayItems.length>3&&<button type="button" className="small-link" onClick={()=>setPage('tasks')}>Se {todayItems.length-3} til <Icon name="chevron" size={16}/></button>}</div>
         </section>
+        <div className="home-shopping-shortcuts" role="group" aria-label="Handlelister">
+          {(['shared','private'] as const).map(scope=><button type="button" key={scope} onClick={()=>{setShoppingVisibility(scope);setGroceryName('');setPage('shopping');}}><Icon name={scope==='shared'?'shopping':'lock'} size={20}/><span><strong>{scope==='shared'?'Felles handleliste':'Min handleliste'}</strong><small>{groceries.filter(item=>item.visibility===scope&&!item.checked).length} varer å handle</small></span><Icon name="chevron" size={18}/></button>)}
+        </div>
+        <details className="home-disclosure"><summary>Uken vår <span>Se middager, avtaler og oppgaver</span></summary>
         <section className="panel weekly-overview" aria-labelledby="home-week-title">
           <div className="panel-head week-overview-head"><div><div className="eyebrow">ALT PÅ ETT STED</div><h2 id="home-week-title">Uken vår</h2><p className="weekly-subtitle">Middag, avtaler og det som skal gjøres · {niceDate(previewWeek[0])} – {niceDate(previewWeek[6])}</p></div>
             <div className="week-controls"><button type="button" className="icon-btn" aria-label="Forrige uke" onClick={()=>{setOverviewWeek(shiftISODate(overviewWeek,-7));setExpandedWeekDay(null);}}><Icon name="left"/></button><button type="button" className="today-btn" disabled={overviewWeek===currentMonday} onClick={()=>{setOverviewWeek(currentMonday);setExpandedWeekDay(null);}}>Denne uken</button><button type="button" className="icon-btn" aria-label="Neste uke" onClick={()=>{setOverviewWeek(shiftISODate(overviewWeek,7));setExpandedWeekDay(null);}}><Icon name="chevron"/></button></div></div>
@@ -572,7 +559,17 @@ export default function Home() {
           })()}
           <p className="meal-hint">Middagene kan endres direkte fra ukeoversikten. Trykk «+ flere» for å se alt som skjer en dag. <span className="weekly-mobile-hint">Sveip sideveis for å se hele uken.</span></p>
         </section>
-      </>}
+        </details>
+        <details className="home-disclosure"><summary>Fullført nylig <span>Se hva dere har fått gjort</span></summary>
+        <section className="panel home-completed" aria-labelledby="recent-completed-title">
+          <div className="panel-head"><div><div className="eyebrow">TING DERE HAR FÅTT GJORT</div><h2 id="recent-completed-title">Fullført nylig</h2></div><button type="button" className="small-link" onClick={()=>{setTaskFilter('all');setPage('tasks');}}>Alle oppgaver <Icon name="chevron" size={16}/></button></div>
+          {recentCompleted.length ? <div className="home-completed-list">{recentCompleted.map(item=><div className="home-completed-row" key={item.id}>
+            <span className="completed-mark"><Icon name="check" size={16}/></span>
+            <div className="item-text"><strong>{item.title}</strong><div className="item-meta"><span className="completion-info">{fullfilledBy(item.completedBy,item.when)}</span><SmallBadge type={item.visibility}/>{item.kind==='routine'&&<span>Fast oppgave</span>}</div></div>
+          </div>)}</div>:<div className="compact-empty"><Icon name="check" size={20}/><p>Ingen fullførte oppgaver ennå. De dukker opp her når dere krysser av.</p></div>}
+        </section>
+        </details>
+      </div>}
       {page==='tasks'&&<><section className="section-header"><div><div className="eyebrow">SMÅ STEG, STOR FORSKJELL</div><h1>Oppgaver</h1><p>Hold oversikt over det du gjør alene, og det dere gjør sammen.</p></div><button className="primary" onClick={()=>openTaskEditor()}><Icon name="plus" size={18}/> Ny oppgave</button></section>
         <section className="panel list-panel"><div className="panel-head"><h2>Å gjøre <span className="round-count">{visibleOpenTasks.length}</span></h2></div><div className="filters" aria-label="Filtrer oppgaver">{(['all','shared','private'] as const).map(f=><button key={f} className={taskFilter===f?'active':''} onClick={()=>setTaskFilter(f)}>{f==='all'?'Alle':f==='shared'?'Felles':'Private'}</button>)}</div>{visibleOpenTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle" onClick={()=>{void toggleTask(task);}} disabled={busy} aria-label={`Fullfør ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><SmallBadge type={task.visibility}/>{task.due_on&&<span>Frist {niceDate(task.due_on)}</span>}</div></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}{!visibleOpenTasks.length&&<Empty title="Alt er gjort" detail="Legg til en oppgave når det dukker opp noe."/>}</section>
         {!!visibleDoneTasks.length&&<section className="panel list-panel done-panel"><h2>Fullført</h2>{visibleDoneTasks.map(task=><div key={task.id} className="task-row"><button className="check-circle checked" onClick={()=>{void toggleTask(task);}} disabled={busy} aria-label={`Gjenåpne ${task.title}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{task.title}</strong><div className="item-meta"><span className="completion-info"><Icon name="users" size={13}/>{fullfilledBy(task.completed_by,task.completed_at)}</span></div></div><button className="edit-button" onClick={()=>openTaskEditor(task)} aria-label={`Rediger ${task.title}`}><Icon name="edit" size={17}/></button><button className="remove" onClick={()=>{void remove('hd_tasks',task.id);}} aria-label={`Slett ${task.title}`}><Icon name="trash" size={17}/></button></div>)}</section>}

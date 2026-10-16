@@ -425,3 +425,41 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .bought-groceries{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
 .bought-groceries summary{cursor:pointer;font-weight:700;margin-bottom:12px;color:var(--ink2)}
+
+/* A quieter home: today's essentials, with the week and history on demand. */
+.calm-home{max-width:960px;margin:0 auto}
+.calm-home .today-header{margin-bottom:28px}
+.calm-home .today-header h1{font-size:clamp(27px,3vw,35px);margin-bottom:8px}
+.calm-home .today-header .eyebrow{display:none}
+.calm-home .today-feature-grid{gap:20px;margin-bottom:24px}
+.calm-home .today-meal-card{background:#edf3e9;box-shadow:none;padding:24px}
+.calm-home .feature-illustration{display:none}
+.calm-home .feature-date{font-weight:500}
+.calm-home .next-up-card{box-shadow:none;padding:24px}
+.calm-home .next-up-card .event-date{background:#f5f6f1}
+.calm-home .today-focus{box-shadow:none;padding:22px 24px;margin-bottom:20px}
+.calm-home .today-focus h2{font-size:20px;margin:0 0 5px}
+.calm-home .today-focus .panel-head{gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.today-task-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}
+.home-shopping-shortcuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px}
+.home-shopping-shortcuts button{display:flex;align-items:center;gap:12px;text-align:left;padding:16px 18px;background:transparent;border:1px solid var(--line);border-radius:13px;color:var(--ink2);min-height:76px}
+.home-shopping-shortcuts button:hover{background:#edf3e9}
+.home-shopping-shortcuts button>span{flex:1;min-width:0}
+.home-shopping-shortcuts svg{flex-shrink:0}
+.home-shopping-shortcuts strong,.home-shopping-shortcuts small{display:block;overflow-wrap:anywhere}
+.home-shopping-shortcuts strong{font-size:13px;font-weight:650}
+.home-shopping-shortcuts small{font-size:12px;color:var(--muted);margin-top:3px}
+.home-disclosure{border-top:1px solid var(--line)}
+.home-disclosure>summary{cursor:pointer;padding:20px 4px;font-weight:650;color:var(--ink2);font-size:15px}
+.home-disclosure>summary span{font-size:12px;font-weight:400;color:var(--muted);margin-left:12px}
+.home-disclosure>summary:focus-visible{outline:3px solid #6c9d7c;outline-offset:3px;border-radius:5px}
+.home-disclosure>.panel{box-shadow:none;margin-bottom:20px}
+@media(max-width:700px){
+ .calm-home .today-feature-grid{gap:14px;margin-bottom:18px}
+ .calm-home .today-meal-card,.calm-home .next-up-card,.calm-home .today-focus{padding:20px}
+ .calm-home .today-header{margin-bottom:22px}
+ .home-shopping-shortcuts{gap:10px;margin-bottom:22px}
+ .home-shopping-shortcuts button{padding:14px 10px;gap:8px;flex-wrap:wrap}
+ .home-shopping-shortcuts button>svg:last-child{display:none}
+ .home-disclosure>summary span{display:block;margin:4px 0 0 18px}
+}
