@@ -7,7 +7,7 @@ export type Task = {
 };
 export type Grocery = {
   id: string; household_id: string; added_by: string;
-  name: string; checked: boolean; checked_at: string | null; created_at: string; visibility: Visibility;
+  name: string; quantity: number; unit: string; checked: boolean; checked_at: string | null; created_at: string; visibility: Visibility;
 };
 export type Event = {
   id: string; owner_id: string; household_id: string | null;

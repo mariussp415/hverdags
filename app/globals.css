@@ -483,3 +483,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
  .month-event-chip{font-size:12px;line-height:1.45}
  .calendar-scroll-hint{display:block;font-size:12px;color:var(--muted);margin:10px 0 0}
 }
+
+/* Grocery amounts and recipe selection, sized for touch screens. */
+.grocery-amount{display:flex;gap:10px;min-width:0}
+.grocery-amount label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:650;color:var(--ink2);flex:1;min-width:0}
+.grocery-amount input,.grocery-amount select{width:100%;min-width:0;min-height:44px;border:1px solid #dfe7db;border-radius:10px;padding:10px;background:#fff;color:var(--ink);font:inherit;font-size:14px}
+.shopping-form{flex-wrap:wrap;align-items:flex-end}
+.shopping-form>input{flex:1 1 100%}
+.shopping-form .grocery-amount{flex:1}
+.shopping-form>.primary{height:44px}
+.grocery-edit{position:relative;background:none;border:0;text-align:left;padding:8px 24px 8px 0;min-height:44px;color:var(--ink)}
+.grocery-edit>span{display:block;margin-top:3px;font-size:12px;color:var(--muted)}
+.grocery-edit>svg{position:absolute;right:3px;top:50%;transform:translateY(-50%);color:var(--muted)}
+.grocery-edit:hover strong{text-decoration:underline}
+.shopping-success{font-size:13px;color:#2f6841;background:#edf5e9;padding:10px 12px;border-radius:10px}
+.recipe-shopping{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;border:1px solid #c9ddcb;border-radius:10px;background:#eff6eb;color:#315e40;font-weight:650;padding:10px}
+.recipe-shopping:disabled{opacity:.5;cursor:not-allowed}
+.ingredient-picker{display:flex;flex-direction:column;gap:14px}
+.ingredient-row{display:flex;flex-direction:column;gap:12px;min-width:0;margin:0;padding:14px;border:1px solid var(--line);border-radius:12px}
+.dialog-form .ingredient-select{display:flex;flex-direction:row;align-items:center;gap:9px;min-height:36px}
+.ingredient-select input{width:20px;height:20px;accent-color:#326848}

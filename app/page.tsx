@@ -8,6 +8,9 @@ import { routineOccurrences } from '@/lib/routines.mjs';
 import { mondayOfWeek, shiftISODate, weekDates, localISODate } from '@/lib/meal-dates.mjs';
 import { monthGrid, shiftMonth } from '@/lib/calendar.mjs';
 
+import { groceryUnits, normalizedGroceryName, parseIngredients } from '@/lib/shopping.mjs';
+
+type GroceryDraft = {name:string;quantity:string;unit:string;selected:boolean;merge:boolean};
 const locale = 'nb-NO';
 // Bekreftelseslenker fra Supabase skal tilbake til riktig repo-sti.
 const authRedirectUrl = () => `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/`;
@@ -93,7 +96,7 @@ export default function Home() {
   const [mealNotes,setMealNotes] = useState('');
   const [notice,setNotice] = useState('');
   const [busy,setBusy] = useState(false);
-  const [modal,setModal] = useState<'task'|'event'|'meal'|'recipe'|'routine'|null>(null);
+  const [modal,setModal] = useState<'task'|'event'|'meal'|'recipe'|'routine'|'grocery'|'ingredients'|null>(null);
   const [editingTask,setEditingTask] = useState<Task|null>(null);
   const [editingEvent,setEditingEvent] = useState<HomeEvent|null>(null);
   const [taskFilter,setTaskFilter] = useState<'all'|'private'|'shared'>('all');
@@ -113,6 +116,16 @@ export default function Home() {
   const [taskVisibility,setTaskVisibility] = useState<Visibility>('shared');
   const [taskDue,setTaskDue] = useState('');
   const [groceryName,setGroceryName] = useState('');
+  const [groceryQuantity,setGroceryQuantity] = useState('1');
+  const [groceryUnit,setGroceryUnit] = useState('stk');
+  const [editingGrocery,setEditingGrocery] = useState<Grocery|null>(null);
+  const [editGroceryName,setEditGroceryName] = useState('');
+  const [editGroceryQuantity,setEditGroceryQuantity] = useState('1');
+  const [editGroceryUnit,setEditGroceryUnit] = useState('stk');
+  const [ingredientRows,setIngredientRows] = useState<GroceryDraft[]>([]);
+  const [ingredientTitle,setIngredientTitle] = useState('');
+  const [ingredientScope,setIngredientScope] = useState<Visibility>('shared');
+  const [shoppingSuccess,setShoppingSuccess] = useState('');
   const [shoppingVisibility,setShoppingVisibility] = useState<Visibility>('shared');
   const [eventTitle,setEventTitle] = useState('');
   const [eventVisibility,setEventVisibility] = useState<Visibility>('shared');
@@ -373,14 +386,55 @@ export default function Home() {
     setBusy(true);const {error}=await api.from('hd_routines').delete().eq('id',routine.id);
     setBusy(false);if(error)setNotice(error.message);await loadData();
   }
-  async function saveGrocery(e:FormEvent){
-    e.preventDefault();if(!api||!user||!household||busy||!groceryName.trim())return;
-    setBusy(true);setNotice('');
-    const {error}=await api.from('hd_shopping_items').insert({name:groceryName.trim(),added_by:user.id,household_id:household.id,visibility:shoppingVisibility});
-    setBusy(false);
-    if(error){setNotice(error.message);return;}
-    setGroceryName('');await loadData();
+  const matchingGrocery=(name:string,unit:string,scope:Visibility)=>groceries.find(item=>!item.checked&&item.visibility===scope&&item.unit===unit&&normalizedGroceryName(item.name)===normalizedGroceryName(name));
+  async function addGroceryRows(rows:GroceryDraft[],scope:Visibility){
+    if(!api||!household||busy)return false;
+    setBusy(true);setNotice('');setShoppingSuccess('');
+    try {
+      const items=rows.filter(row=>row.selected).map(row=>({name:row.name.trim(),quantity:Number(row.quantity.replace(',','.')),unit:row.unit,merge_id:row.merge?matchingGrocery(row.name,row.unit,scope)?.id:null}));
+      const {error}=await api.rpc('hd_add_shopping',{p_household:household.id,p_visibility:scope,p_items:items});
+      if(error){setNotice(error.message);return false;}
+      await loadData();
+      setShoppingSuccess(`${items.length===1?'Varen er':`${items.length} varer er`} lagt til i ${scope==='shared'?'felleslisten':'din liste'}.`);
+      return true;
+    } catch {setNotice('Kunne ikke lagre. Sjekk forbindelsen og oppdater listen før du prøver igjen.');return false;}
+    finally {setBusy(false);}
   }
+  async function saveGrocery(e:FormEvent){
+    e.preventDefault();if(!groceryName.trim()||busy)return;
+    const row={name:groceryName.trim(),quantity:groceryQuantity,unit:groceryUnit,selected:true,merge:true};
+    if(matchingGrocery(row.name,row.unit,shoppingVisibility)){
+      setIngredientTitle('Varen finnes allerede');setIngredientScope(shoppingVisibility);setIngredientRows([row]);setNotice('');setModal('ingredients');return;
+    }
+    if(await addGroceryRows([row],shoppingVisibility)){setGroceryName('');setGroceryQuantity('1');setGroceryUnit('stk');}
+  }
+  function openGroceryEditor(item:Grocery){
+    setEditingGrocery(item);setEditGroceryName(item.name);setEditGroceryQuantity(String(item.quantity));setEditGroceryUnit(item.unit);setNotice('');setModal('grocery');
+  }
+  async function saveGroceryEdit(e:FormEvent){
+    e.preventDefault();if(!api||!editingGrocery||busy)return;
+    setBusy(true);setNotice('');
+    try {
+      const {error}=await api.from('hd_shopping_items').update({name:editGroceryName.trim(),quantity:Number(editGroceryQuantity.replace(',','.')),unit:editGroceryUnit}).eq('id',editingGrocery.id).select('id').single();
+      if(error){setNotice('Kunne ikke lagre varen. Den kan ha blitt slettet. '+error.message);return;}
+      closeModal();await loadData();setShoppingSuccess('Varen er oppdatert.');
+    } catch {setNotice('Kunne ikke lagre. Sjekk forbindelsen og prøv igjen.');}
+    finally {setBusy(false);}
+  }
+  function openIngredientPicker(recipe:Recipe){
+    const rows=parseIngredients(recipe.ingredients);
+    if(!rows.length){setNotice('Legg til ingredienser i oppskriften først, én per linje.');return;}
+    if(rows.length>100){setNotice('Oppskriften har for mange linjer. Bruk maksimalt 100 ingredienser.');return;}
+    setIngredientRows(rows.map(row=>({...row,quantity:String(row.quantity),selected:true,merge:true})));
+    setIngredientTitle(recipe.name);setIngredientScope('shared');setNotice('');setModal('ingredients');
+  }
+  async function saveIngredients(e:FormEvent){
+    e.preventDefault();
+    if(await addGroceryRows(ingredientRows,ingredientScope)){
+      closeModal();setShoppingVisibility(ingredientScope);setGroceryName('');setGroceryQuantity('1');setGroceryUnit('stk');setPage('shopping');
+    }
+  }
+  function updateIngredient(index:number,patch:Partial<GroceryDraft>){setIngredientRows(rows=>rows.map((row,i)=>i===index?{...row,...patch}:row));}
   async function toggleTask(task:Task){
     if(!api||busy)return;
     setBusy(true);setNotice('');
@@ -462,7 +516,7 @@ export default function Home() {
   const plannedThisWeek=displayedWeek.filter(date=>meals.some(meal=>meal.meal_date===date)).length;
   const displayName=((user?.user_metadata?.display_name as string|undefined)||user?.email?.split('@')[0]||'dere').trim().split(' ')[0];
   const greeting=new Date().getHours()<11?'God morgen':new Date().getHours()<17?'God ettermiddag':'God kveld';
-  const shoppingTabs=<div className="setup-tabs" role="group" aria-label="Velg handleliste">{(['shared','private'] as const).map(scope=><button key={scope} type="button" className={shoppingVisibility===scope?'active':''} aria-pressed={shoppingVisibility===scope} onClick={()=>{setShoppingVisibility(scope);setGroceryName('');}}>{scope==='shared'?'Felles liste':'Min liste'} <span className="round-count">{groceries.filter(item=>item.visibility===scope&&!item.checked).length}</span></button>)}</div>;
+  const shoppingTabs=<div className="setup-tabs" role="group" aria-label="Velg handleliste">{(['shared','private'] as const).map(scope=><button key={scope} type="button" className={shoppingVisibility===scope?'active':''} aria-pressed={shoppingVisibility===scope} onClick={()=>{setShoppingVisibility(scope);setGroceryName('');setGroceryQuantity('1');setGroceryUnit('stk');setShoppingSuccess('');}}>{scope==='shared'?'Felles liste':'Min liste'} <span className="round-count">{groceries.filter(item=>item.visibility===scope&&!item.checked).length}</span></button>)}</div>;
   const nav:[Page,string,string][]=[['home','I dag','home'],['tasks','Oppgaver','tasks'],['shopping','Handle','shopping'],['calendar','Kalender','calendar'],['meals','Matplan','meals']];
 
   if(!api) return <main className="fullscreen"><div className="setup-card"><div className="brand-icon"><Icon name="heart" size={30}/></div><h1>hverdags<span>.</span></h1><p>Prosjektet er klart til å kobles til en database.</p><div className="info-panel">Opprett et Supabase-prosjekt, kjør <code>supabase/schema.sql</code>, og fyll inn <code>.env.local</code> som beskrevet i README.</div></div></main>;
@@ -515,7 +569,7 @@ export default function Home() {
           <div className="today-task-footer"><button type="button" className="small-link" onClick={()=>openTaskEditor()}><Icon name="plus" size={16}/> Ny oppgave</button>{todayItems.length>3&&<button type="button" className="small-link" onClick={()=>setPage('tasks')}>Se {todayItems.length-3} til <Icon name="chevron" size={16}/></button>}</div>
         </section>
         <div className="home-shopping-shortcuts" role="group" aria-label="Handlelister">
-          {(['shared','private'] as const).map(scope=><button type="button" key={scope} onClick={()=>{setShoppingVisibility(scope);setGroceryName('');setPage('shopping');}}><Icon name={scope==='shared'?'shopping':'lock'} size={20}/><span><strong>{scope==='shared'?'Felles handleliste':'Min handleliste'}</strong><small>{groceries.filter(item=>item.visibility===scope&&!item.checked).length} varer å handle</small></span><Icon name="chevron" size={18}/></button>)}
+          {(['shared','private'] as const).map(scope=><button type="button" key={scope} onClick={()=>{setShoppingVisibility(scope);setGroceryName('');setGroceryQuantity('1');setGroceryUnit('stk');setShoppingSuccess('');setPage('shopping');}}><Icon name={scope==='shared'?'shopping':'lock'} size={20}/><span><strong>{scope==='shared'?'Felles handleliste':'Min handleliste'}</strong><small>{groceries.filter(item=>item.visibility===scope&&!item.checked).length} varer å handle</small></span><Icon name="chevron" size={18}/></button>)}
         </div>
         <details className="home-disclosure"><summary>Uken vår <span>Se middager, avtaler og oppgaver</span></summary>
         <section className="panel weekly-overview" aria-labelledby="home-week-title">
@@ -586,11 +640,12 @@ export default function Home() {
             {routines.filter(r=>!currentRoutines.some(c=>c.id===r.id)&&(taskFilter==='all'||r.visibility===taskFilter)).map(r=><div key={r.id} className="task-row"><Icon name="repeat" size={17}/><div className="item-text"><strong>{r.title}</strong><div className="item-meta"><SmallBadge type={r.visibility}/><span>{r.interval_weeks===1?'Hver uke':'Annenhver uke'} · Starter {niceDate(r.start_on)}</span></div></div><button type="button" className="edit-button" aria-label={`Rediger ${r.title}`} onClick={()=>openRoutineEditor(r)}><Icon name="edit" size={17}/></button><button type="button" className="remove" aria-label={`Slett ${r.title}`} onClick={()=>{void removeRoutine(r);}}><Icon name="trash" size={17}/></button></div>)}</details>}
         </section>
       </>}
-      {page==='shopping'&&<><section className="section-header"><div><div className="eyebrow">STORT OG SMÅTT</div><h1>Handlelister</h1><p>En felles liste for dere begge, og en egen liste bare for deg.</p></div></section><section className="panel list-panel"><div className="panel-head"><h2>{shoppingVisibility==='shared'?'Felles liste':'Min liste'} <span className="round-count">{unchecked.length}</span></h2><SmallBadge type={shoppingVisibility}/></div>{shoppingTabs}<p className="helper">{shoppingVisibility==='shared'?'Begge kan legge til, krysse av og slette varer her.':'Bare du kan se og endre varene på denne listen.'}</p><form onSubmit={saveGrocery} className="shopping-form"><input aria-label="Ny vare på valgt handleliste" value={groceryName} onChange={e=>setGroceryName(e.target.value)} maxLength={100} placeholder="F.eks. melk, brød eller kaffe" required/><button className="primary" disabled={busy} aria-label="Legg til vare"><Icon name="plus"/></button></form>
-        {unchecked.map(item=><div key={item.id} className="task-row"><button type="button" className="check-circle" disabled={busy} onClick={()=>{void toggleGrocery(item);}} aria-label={`Marker kjøpt ${item.name}`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{item.name}</strong></div><button className="remove" disabled={busy} onClick={()=>{void remove('hd_shopping_items',item.id);}} aria-label={`Slett ${item.name}`}><Icon name="trash" size={17}/></button></div>)}
+      {page==='shopping'&&<><section className="section-header"><div><div className="eyebrow">STORT OG SMÅTT</div><h1>Handlelister</h1><p>En felles liste for dere begge, og en egen liste bare for deg.</p></div></section><section className="panel list-panel"><div className="panel-head"><h2>{shoppingVisibility==='shared'?'Felles liste':'Min liste'} <span className="round-count">{unchecked.length}</span></h2><SmallBadge type={shoppingVisibility}/></div>{shoppingTabs}<p className="helper">{shoppingVisibility==='shared'?'Begge kan legge til, krysse av og slette varer her.':'Bare du kan se og endre varene på denne listen.'}</p><form onSubmit={saveGrocery} className="shopping-form"><input aria-label="Ny vare på valgt handleliste" value={groceryName} onChange={e=>setGroceryName(e.target.value)} maxLength={100} placeholder="F.eks. melk, brød eller kaffe" required/><div className="grocery-amount"><label>Mengde<input aria-label="Mengde" type="number" inputMode="decimal" min="0.001" max="99999" step="any" value={groceryQuantity} onChange={e=>setGroceryQuantity(e.target.value)} required/></label><label>Enhet<select value={groceryUnit} onChange={e=>setGroceryUnit(e.target.value)}>{groceryUnits.map(unit=><option key={unit}>{unit}</option>)}</select></label></div><button className="primary" disabled={busy} aria-label="Legg til vare"><Icon name="plus"/></button></form>
+        {shoppingSuccess&&<p className="shopping-success" role="status">{shoppingSuccess}</p>}
+        {unchecked.map(item=><div key={item.id} className="task-row"><button type="button" className="check-circle" disabled={busy} onClick={()=>{void toggleGrocery(item);}} aria-label={`Marker kjøpt ${item.name}`}><Icon name="check" size={14}/></button><button type="button" className="item-text grocery-edit" onClick={()=>openGroceryEditor(item)} disabled={busy} aria-label={`Rediger ${item.name}`}><strong>{item.name}</strong><span>{Number(item.quantity).toLocaleString(locale)} {item.unit}</span><Icon name="edit" size={14}/></button><button className="remove" disabled={busy} onClick={()=>{void remove('hd_shopping_items',item.id);}} aria-label={`Slett ${item.name}`}><Icon name="trash" size={17}/></button></div>)}
         {!unchecked.length&&<Empty title="Ingenting igjen å handle" detail="Legg til en vare over, eller flytt en vare tilbake fra Kjøpt."/>}
         {boughtGroceries.length>0&&<details className="bought-groceries" open><summary>Kjøpt <span className="round-count">{boughtGroceries.length}</span></summary><p className="helper">Kjøpte varer ryddes automatisk bort etter 24 timer når listen oppdateres. Trykk på krysset for å legge en vare tilbake.</p>
-          {boughtGroceries.map(item=><div key={item.id} className="task-row dimmed"><button type="button" className="check-circle checked" disabled={busy} onClick={()=>{void toggleGrocery(item);}} aria-label={`Legg ${item.name} tilbake på handlelisten`}><Icon name="check" size={14}/></button><div className="item-text"><strong>{item.name}</strong></div></div>)}
+          {boughtGroceries.map(item=><div key={item.id} className="task-row dimmed"><button type="button" className="check-circle checked" disabled={busy} onClick={()=>{void toggleGrocery(item);}} aria-label={`Legg ${item.name} tilbake på handlelisten`}><Icon name="check" size={14}/></button><button type="button" className="item-text grocery-edit" onClick={()=>openGroceryEditor(item)} disabled={busy} aria-label={`Rediger ${item.name}`}><strong>{item.name}</strong><span>{Number(item.quantity).toLocaleString(locale)} {item.unit}</span><Icon name="edit" size={14}/></button></div>)}
           <button type="button" className="panel-add" disabled={busy} onClick={()=>{void clearBoughtGroceries();}}><Icon name="trash" size={16}/> Tøm kjøpte varer</button>
         </details>}
         </section></>}
@@ -648,6 +703,7 @@ export default function Home() {
           <div className="filters" aria-label="Vis oppskrifter"><button type="button" className={recipeFilter==='all'?'active':''} onClick={()=>setRecipeFilter('all')}>Alle</button><button type="button" className={recipeFilter==='favorites'?'active':''} onClick={()=>setRecipeFilter('favorites')}>Favoritter</button></div>
           <div className="recipe-grid">{shownRecipes.map(recipe=><article key={recipe.id} className="recipe-card"><div className="recipe-top"><div><h3>{recipe.name}</h3><span className="eyebrow">FELLES OPPSKRIFT</span></div><button type="button" className={`recipe-favorite ${recipe.favorite?'is-favorite':''}`} disabled={busy} onClick={()=>{void toggleFavorite(recipe);}} aria-label={`${recipe.favorite?'Fjern':'Legg til'} favoritt: ${recipe.name}`} aria-pressed={recipe.favorite}><Icon name="star" size={21}/></button></div>
             {(recipe.ingredients||recipe.instructions)&&<details className="recipe-details"><summary>Se oppskrift</summary>{recipe.ingredients&&<div><strong>Ingredienser</strong><p>{recipe.ingredients}</p></div>}{recipe.instructions&&<div><strong>Fremgangsmåte</strong><p>{recipe.instructions}</p></div>}</details>}
+            <button type="button" className="recipe-shopping" disabled={!recipe.ingredients.trim()||busy} onClick={()=>openIngredientPicker(recipe)}><Icon name="shopping" size={18}/> Til handlelisten</button>
             <div className="recipe-actions"><button type="button" className="recipe-plan" onClick={()=>{const date=displayedWeek.find(d=>!meals.some(m=>m.meal_date===d))||today;openMealEditor(date,meals.find(m=>m.meal_date===date));setMealName(recipe.name);setSelectedRecipeId(recipe.id);}}><Icon name="calendar" size={16}/> Planlegg</button><button type="button" className="recipe-icon" onClick={()=>openRecipeEditor(recipe)} aria-label={`Rediger ${recipe.name}`}><Icon name="edit" size={18}/></button><button type="button" className="recipe-icon" onClick={()=>{void removeRecipe(recipe);}} aria-label={`Slett ${recipe.name}`}><Icon name="trash" size={18}/></button></div>
           </article>)}</div>
           {!shownRecipes.length&&<Empty title={recipeFilter==='favorites'?'Ingen favoritter ennå':'Middagsbiblioteket er tomt'} detail="Lagre en middag dere liker, så finner dere den igjen neste uke."/>}
@@ -656,6 +712,11 @@ export default function Home() {
       <footer className="page-footer"><Icon name="heart" size={14}/> Litt mindre stress, litt mer oss.</footer>
     </main></div>
     <nav className="bottom-nav" aria-label="Hovedmeny">{nav.map(([id,label,icon])=><button key={id} type="button" aria-current={page===id?'page':undefined} className={page===id?'selected':''} onClick={()=>setPage(id)}><Icon name={icon} size={21}/><span>{label}</span></button>)}</nav>
+    {modal==='grocery'&&<Modal title="Rediger vare" onClose={()=>{if(!busy)closeModal();}}><form onSubmit={saveGroceryEdit} className="dialog-form"><label>Varenavn<input autoFocus value={editGroceryName} onChange={e=>setEditGroceryName(e.target.value)} maxLength={100} required/></label><div className="grocery-amount"><label>Mengde<input type="number" inputMode="decimal" min="0.001" max="99999" step="any" value={editGroceryQuantity} onChange={e=>setEditGroceryQuantity(e.target.value)} required/></label><label>Enhet<select value={editGroceryUnit} onChange={e=>setEditGroceryUnit(e.target.value)}>{groceryUnits.map(unit=><option key={unit}>{unit}</option>)}</select></label></div>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre endringer'}</button></form></Modal>}
+    {modal==='ingredients'&&<Modal title={ingredientTitle} onClose={()=>{if(!busy)closeModal();}}><form onSubmit={saveIngredients} className="dialog-form"><p className="helper">Velg det dere trenger, og kontroller mengdene. Varene legges i {ingredientScope==='shared'?'felleslisten':'din private liste'}.</p><div className="ingredient-picker">{ingredientRows.map((row,index)=>{
+      const match=matchingGrocery(row.name,row.unit,ingredientScope);
+      return <fieldset className="ingredient-row" key={index} disabled={busy}><legend className="sr-only">Ingrediens {index+1}</legend><label className="ingredient-select"><input type="checkbox" checked={row.selected} onChange={e=>updateIngredient(index,{selected:e.target.checked})}/> Ta med</label><label>Vare<input value={row.name} onChange={e=>updateIngredient(index,{name:e.target.value})} maxLength={100} required={row.selected} disabled={!row.selected}/></label><div className="grocery-amount"><label>Mengde<input type="number" inputMode="decimal" min="0.001" max="99999" step="any" value={row.quantity} onChange={e=>updateIngredient(index,{quantity:e.target.value})} required={row.selected} disabled={!row.selected}/></label><label>Enhet<select value={row.unit} onChange={e=>updateIngredient(index,{unit:e.target.value})} disabled={!row.selected}>{groceryUnits.map(unit=><option key={unit}>{unit}</option>)}</select></label></div>{match&&<label>På listen: {Number(match.quantity).toLocaleString(locale)} {match.unit}<select value={row.merge?'merge':'new'} onChange={e=>updateIngredient(index,{merge:e.target.value==='merge'})} disabled={!row.selected}><option value="merge">Øk mengden på eksisterende vare</option><option value="new">Legg til som egen vare</option></select></label>}</fieldset>;
+    })}</div>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy||!ingredientRows.some(row=>row.selected)}>{busy?'Lagrer …':`Legg til ${ingredientRows.filter(row=>row.selected).length} ${ingredientRows.filter(row=>row.selected).length===1?'vare':'varer'}`}</button></form></Modal>}
     {modal==='meal'&&<Modal title={editingMeal?'Rediger middag':'Planlegg middag'} onClose={closeModal}><form onSubmit={saveMeal} className="dialog-form"><label>Dato<input type="date" value={mealDate} onChange={e=>setMealDate(e.target.value)} required/></label><label>Velg fra middagsbiblioteket (valgfritt)<select value={selectedRecipeId} onChange={e=>{const r=recipes.find(item=>item.id===e.target.value);setSelectedRecipeId(e.target.value);if(r)setMealName(r.name);}}><option value="">Skriv en egen middag</option>{recipes.map(r=><option key={r.id} value={r.id}>{r.favorite?"★ ":""}{r.name}</option>)}</select></label><label>Hva skal dere spise?<input autoFocus value={mealName} onChange={e=>setMealName(e.target.value)} placeholder="F.eks. kyllingwok" maxLength={100} required/></label>{editingMeal?.status==='eaten'&&<label>Det dere faktisk spiste<input value={mealActual} onChange={e=>setMealActual(e.target.value)} maxLength={100} placeholder={mealName||'Hva spiste dere?'}/></label>}<label>Notat (valgfritt)<textarea value={mealNotes} onChange={e=>setMealNotes(e.target.value)} maxLength={500} rows={3} placeholder="F.eks. oppskrift, tilbehør eller restemat"/></label><p className="helper">Middagsplanen er felles for begge. Etter maten kan dere trykke «Marker spist».</p>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre middag'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {modal==='recipe'&&<Modal title={editingRecipe?'Rediger oppskrift':'Ny oppskrift'} onClose={closeModal}><form onSubmit={saveRecipe} className="dialog-form"><label>Navn på middag<input value={recipeName} onChange={e=>setRecipeName(e.target.value)} maxLength={100} placeholder="F.eks. pasta med pesto" autoFocus required/></label><label>Ingredienser (valgfritt)<textarea rows={5} maxLength={4000} value={recipeIngredients} onChange={e=>setRecipeIngredients(e.target.value)} placeholder="Skriv én ingrediens per linje"/></label><label>Fremgangsmåte (valgfritt)<textarea rows={4} maxLength={4000} value={recipeInstructions} onChange={e=>setRecipeInstructions(e.target.value)} placeholder="Hvordan lager dere retten?"/></label><label className="checkbox-label"><input type="checkbox" checked={recipeFavorite} onChange={e=>setRecipeFavorite(e.target.checked)}/> Legg til som favoritt</label>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre oppskrift'}<Icon name="arrow" size={18}/></button></form></Modal>}
     {modal==='routine'&&<Modal title={editingRoutine?'Rediger fast oppgave':'Ny fast oppgave'} onClose={closeModal}><form onSubmit={saveRoutine} className="dialog-form"><label>Hva skal gjøres?<input autoFocus value={routineTitle} onChange={e=>setRoutineTitle(e.target.value)} maxLength={100} required placeholder="F.eks. vaske bad"/></label><label>Første gang<input type="date" value={routineStart} onChange={e=>setRoutineStart(e.target.value)} required/></label><label>Gjentas<select value={routineInterval} onChange={e=>setRoutineInterval(Number(e.target.value) as 1|2)}><option value={1}>Hver uke</option><option value={2}>Annenhver uke</option></select></label><div className="form-label">Hvem kan se oppgaven?</div><div className="visibility-grid"><button type="button" disabled={!!editingRoutine} className={routineVisibility==='private'?'chosen':''} onClick={()=>setRoutineVisibility('private')}><Icon name="lock" size={18}/><strong>Kun meg</strong><small>Privat</small></button><button type="button" disabled={!!editingRoutine} className={routineVisibility==='shared'?'chosen':''} onClick={()=>setRoutineVisibility('shared')}><Icon name="users" size={18}/><strong>Felles</strong><small>Begge kan krysse av</small></button></div><p className="helper">En fast oppgave dukker automatisk opp på samme ukedag. Når den er utført, kommer den tilbake neste uke eller annenhver uke.</p>{notice&&<div className="notice" role="alert">{notice}</div>}<button className="primary full" disabled={busy}>{busy?'Lagrer …':'Lagre fast oppgave'}<Icon name="arrow" size={18}/></button></form></Modal>}
