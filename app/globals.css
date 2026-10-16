@@ -422,3 +422,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .weekly-expanded{padding:10px}
   .weekly-expanded-head{align-items:flex-start}
 }
+
+.bought-groceries{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+.bought-groceries summary{cursor:pointer;font-weight:700;margin-bottom:12px;color:var(--ink2)}
